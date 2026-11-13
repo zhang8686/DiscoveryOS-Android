@@ -144,14 +144,14 @@ export function Thread(props: {
   }
 
   // Pictures and files pasted or dropped into the reply: uploaded to the thread, sent as tags with the reply.
-  const { attachments, uploading, onPaste, onFileDrop } = createAttachments(
+  const { attachments, uploading, onPaste, onFileDrop, addFiles } = createAttachments(
     (file, kind) => {
       // While a reply is edited, its pictures go through the edit form's own upload box.
       const current = editing();
       return current ? uploadEditAttachment(current.form, file, kind) : uploadAttachment(fid(), props.post.id, file, kind);
     },
-    (name) => `Couldn't upload ${name}. Try again.`,
-    "Can't attach that file. Try dragging it into the box.",
+    (name) => `无法上传 ${name}，请重试。`,
+    "无法添加这个文件，请点「附件」重新选择。",
   );
 
   function quote(r: Reply) {
@@ -532,6 +532,7 @@ export function Thread(props: {
         {/* The box edits the reply under edit, and composes a new reply otherwise. */}
         <ReplyBox
             onFileDrop={onFileDrop}
+            onAttach={addFiles}
             draft={() => editing()?.text ?? draft()}
             onDraft={(text) => {
               const current = editing();

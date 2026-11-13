@@ -39,10 +39,10 @@ export function NewThread(props: {
   const body = signal("");
   const sending = signal(false);
   // Pictures and files pasted or dropped into the body: uploaded to the channel, sent as tags with the thread.
-  const { attachments, uploading, onPaste, onFileDrop } = createAttachments(
+  const { attachments, uploading, onPaste, onFileDrop, addFiles } = createAttachments(
     (file, kind) => uploadAttachment(props.fid, undefined, file, kind),
     (name) => `无法上传 ${name}，请重试。`,
-    "无法添加这个文件，请拖进输入框试试。",
+    "无法添加这个文件，请点「附件」重新选择。",
   );
   // The saved draft fills the fields once, unless the user has typed before it arrives.
   let typed = false;
@@ -124,6 +124,7 @@ export function NewThread(props: {
         uploading={() => uploading()}
         onPaste={onPaste}
         onFileDrop={onFileDrop}
+        onAttach={addFiles}
         // The body starts at 300 pt tall, grows to 600 pt, and does not fold to a chip.
         minField={300}
         maxField={600}

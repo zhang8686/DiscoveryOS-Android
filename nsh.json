@@ -68,6 +68,7 @@
       "write": [
         "${dataDir}"
       ]
-    }
+    },
+    "picker": true
   }
 }

@@ -8,7 +8,7 @@ export type IconName =
   | "star" | "doc" | "bubble" | "mail" | "clock"
   | "tag" | "telescope" | "pencil" | "geek" | "phone" | "apple" | "robot"
   | "palm" | "windows" | "headphones" | "thought" | "bowl" | "lipstick"
-  | "chat" | "list" | "grip" | "chevronUp" | "chevronDown";
+  | "chat" | "list" | "grip" | "image" | "paperclip" | "chevronUp" | "chevronDown";
 
 type Ctx = {
   m: (x: number, y: number) => void;
@@ -204,6 +204,20 @@ const SHAPES: Record<IconName, Shape> = {
       c.circle(0.2, y, 0.045); c.stroke();
       c.m(0.36, y); c.l(0.86, y); c.stroke();
     }
+  },
+  // 图片：方框 + 太阳 + 山
+  image: (c) => {
+    c.m(0.12, 0.18); c.l(0.88, 0.18); c.l(0.88, 0.82); c.l(0.12, 0.82); c.l(0.12, 0.18); c.stroke();
+    c.circle(0.68, 0.36, 0.07); c.stroke();
+    c.m(0.14, 0.72); c.l(0.38, 0.46); c.l(0.54, 0.64); c.l(0.68, 0.52); c.l(0.86, 0.72); c.stroke();
+  },
+  // 附件：回形针
+  paperclip: (c) => {
+    c.m(0.38, 0.3); c.l(0.38, 0.7);
+    c.q(0.38, 0.86, 0.54, 0.86); c.q(0.7, 0.86, 0.7, 0.7);
+    c.l(0.7, 0.3); c.q(0.7, 0.14, 0.54, 0.14); c.q(0.42, 0.14, 0.42, 0.26);
+    c.l(0.42, 0.68); c.q(0.42, 0.76, 0.5, 0.76); c.q(0.58, 0.76, 0.58, 0.68);
+    c.l(0.58, 0.32); c.stroke();
   },
   // 拖动排序手柄：三道横线
   grip: (c) => {

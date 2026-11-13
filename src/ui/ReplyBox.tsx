@@ -3,7 +3,9 @@
 // is one line until it has the focus or has text. Both screens share this one.
 // Pasted pictures show as thumbnails above the text; they have no remove control, and
 // they go with the reply. Cmd+Enter sends (Ctrl+Enter elsewhere); Enter adds a line.
-import { effect, Image, LayoutAnimation, reduceMotion, signal, Text, untracked, View, type PasteEvent } from "nsh";
+import { effect, Image, LayoutAnimation, Picker, reduceMotion, signal, Text, untracked, View, type PasteEvent } from "nsh";
+import { LineIcon } from "./lineIcons";
+import { notify } from "./toast";
 import { useCommand } from "./commands";
 import { Input } from "nsh/base";
 import { palette } from "./appearance";
@@ -56,6 +58,9 @@ export function ReplyBox(props: {
   onPaste?: (e: PasteEvent) => void;
   /** Local files dropped on the box, as `file:` URLs. */
   onFileDrop?: (uris: string[]) => void;
+  /** Files chosen from the system picker. When absent, no picker buttons show
+   * (private messages, for instance, have no attachment upload). */
+  onAttach?: (files: File[]) => void;
   /** The text field's handle, for the app to focus it (the `r` shortcut). */
   fieldRef?: (field: { focus(): void }) => void;
   /** The field's placeholder; "回复" by default. */
@@ -71,6 +76,31 @@ export function ReplyBox(props: {
   cancelShown?: () => boolean;
 }) {
   const sendable = () => (props.canSend ? props.canSend() : props.draft().length > 0) && !props.sending() && !props.uploading?.();
+  // A tablet has no drag-and-drop: the system picker is the visible entry.
+  // Images are scaled natively before they reach the app, and oversized files
+  // are skipped rather than read whole into memory.
+  const MAX_ATTACH_BYTES = 10 * 1024 * 1024;
+  async function picked(files: File[]) {
+    const usable = files.filter((f) => f.size <= MAX_ATTACH_BYTES);
+    if (files.length > usable.length) notify("attach-size", "有文件超过 10 MB，已跳过。");
+    if (usable.length > 0) props.onAttach?.(usable);
+  }
+  async function pickImages() {
+    try {
+      const list = await Picker.pickImages({ multiple: true, limit: 5, maxDimension: 1600, quality: 0.85 });
+      await picked(list.map((p) => p.file));
+    } catch {
+      notify("attach-pick", "无法打开图片选择器。");
+    }
+  }
+  async function pickFiles() {
+    try {
+      const list = await Picker.pickFiles({ multiple: true, limit: 5 });
+      await picked(list.map((p) => p.file));
+    } catch {
+      notify("attach-pick", "无法打开文件选择器。");
+    }
+  }
   useCommand("reply.send", { enabled: sendable, run: () => props.onSend() });
   const pictures = () => props.attachments?.() ?? [];
   const floor = props.minField ?? MIN_FIELD;
@@ -188,6 +218,18 @@ export function ReplyBox(props: {
             backgroundColor: "transparent",
           }}
         />
+        {props.onAttach ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            <View onPress={pickImages} accessibilityLabel="添加图片"
+              style={{ width: 32, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: palette().surface }}>
+              <LineIcon name="image" size={17} />
+            </View>
+            <View onPress={pickFiles} accessibilityLabel="添加附件"
+              style={{ width: 32, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: palette().surface }}>
+              <LineIcon name="paperclip" size={17} />
+            </View>
+          </View>
+        ) : null}
         {props.uploading?.() ? (
           // The labels share the send button's 26 pt box (its icon and padding), so they centre on the plane.
           <View style={{ height: 26, flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -198,7 +240,7 @@ export function ReplyBox(props: {
         {pictures().length > 0 && !props.uploading?.() ? (
           <View style={{ height: 26, justifyContent: "center" }}>
             <Text style={{ fontSize: 12, color: palette().muted }}>
-              {`Uploaded ${pictures().length} ${pictures().length === 1 ? "file" : "files"}`}
+              {`已添加 ${pictures().length} 个附件`}
             </Text>
           </View>
         ) : null}

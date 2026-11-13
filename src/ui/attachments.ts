@@ -84,5 +84,7 @@ export function createAttachments(upload: (file: File, kind: "image" | "file") =
     attachFiles(await readUris(uris, pasteFailed));
   }
 
-  return { attachments, uploading, onPaste, onFileDrop };
+  // Also exposed for the system picker: the same queue, previews and upload path
+  // that pasted and dropped files use.
+  return { attachments, uploading, onPaste, onFileDrop, addFiles: attachFiles };
 }
