@@ -70,6 +70,7 @@
 
 | 项目 | 数值 |
 | --- | --- |
+| 当前版本 | 1.1.0（versionCode 2） |
 | APK 体积 | 约 47 MB（单 arm64-v8a，release 签名） |
 | 应用自身逻辑包 | 约 232 KB（`assets/nsh/bundle.nshc`） |
 | 应用图标 | 约 13 KB |
