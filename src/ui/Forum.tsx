@@ -7,7 +7,7 @@ import { onEscape } from "./escape";
 import { ShortcutsHelp } from "./ShortcutsHelp";
 import { shortcutRows, useCommand } from "./commands";
 import { DEMO, clearReplyPageCache, loadBookmarks, loadChannels, loadMyReplies, loadMyThreads, loadPmUsers, loadPosts, searchThreads } from "../discuz/forum";
-import { avatarPicture, userAvatar } from "../discuz/avatarCache";
+import { userAvatar } from "../discuz/avatarCache";
 import { mergePage, parseChannels, type Channel, type Post } from "../discuz/parse";
 import { BUILTIN_CHANNELS, mergeChannels } from "../discuz/channels";
 import { Thread } from "./Thread";
@@ -186,9 +186,12 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
   const page = signal(1);
   const more = signal(false);
   // Author avatars for the thread rows, looked up once per author.
+  // Only rows without a uid need a profile lookup; rows with a uid render the
+  // avatar URL directly through <Image>, with no JS-side download or base64.
   const avatars = signal<Record<string, string>>({});
   const asked = new Set<string>();
   const listCache = new Map<string, { items: Post[]; more: boolean }>();
+
   // Title search: the term whose results the threads column shows (null while browsing a
   // channel or favorites), whether the search field is open, and what it holds.
   const searchTerm = signal<string | null>(null);
@@ -353,50 +356,48 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
     });
   }
 
-  // Avatars are decoration, not content. A 50-thread page used to fire two
-  // requests per distinct author and call `avatars.set` once per image, each
-  // set rebuilding the virtualized list. Cap concurrency and batch the results.
-  const AVATARS_PER_PAGE = 8;
-  const AVATAR_CONCURRENCY = 2;
-  const avatarQueue: string[] = [];
-  let avatarRunning = 0;
-  let avatarBatch: Record<string, string> = {};
-  let avatarFlush: ReturnType<typeof setTimeout> | null = null;
+  // The address comes from the profile page (cached for a day in storage).
+  // <Image> then loads the picture itself: no JS-side download, no base64.
+  const FALLBACK_PER_PAGE = 8;
+  const FALLBACK_CONCURRENCY = 6;
+  const fallbackQueue: string[] = [];
+  let fallbackRunning = 0;
+  let fallbackBatch: Record<string, string> = {};
+  let fallbackFlush: ReturnType<typeof setTimeout> | null = null;
 
-  function flushAvatars(): void {
-    avatarFlush = null;
-    if (Object.keys(avatarBatch).length === 0) return;
-    avatars.set({ ...avatars(), ...avatarBatch });
-    avatarBatch = {};
+  function flushFallback(): void {
+    fallbackFlush = null;
+    if (Object.keys(fallbackBatch).length === 0) return;
+    avatars.set({ ...avatars(), ...fallbackBatch });
+    fallbackBatch = {};
   }
 
-  function pumpAvatars(): void {
-    while (avatarRunning < AVATAR_CONCURRENCY && avatarQueue.length > 0) {
-      const name = avatarQueue.shift()!;
-      avatarRunning++;
+  function pumpFallback(): void {
+    while (fallbackRunning < FALLBACK_CONCURRENCY && fallbackQueue.length > 0) {
+      const name = fallbackQueue.shift()!;
+      fallbackRunning++;
       userAvatar(name)
-        .then((url) => (url ? avatarPicture(url) : undefined))
-        .then((picture) => {
-          if (!picture) return;
-          avatarBatch[name] = picture;
-          if (!avatarFlush) avatarFlush = setTimeout(flushAvatars, 150);
+        .then((url) => {
+          if (!url) return;
+          fallbackBatch[name] = url;
+          if (!fallbackFlush) fallbackFlush = setTimeout(flushFallback, 150);
         })
         .catch(() => undefined)
-        .finally(() => { avatarRunning--; pumpAvatars(); });
+        .finally(() => { fallbackRunning--; pumpFallback(); });
     }
   }
 
-  function loadAvatars(list: Post[]) {
+  function ensureAvatars(list: Post[]) {
     let added = 0;
     for (const p of list) {
-      if (added >= AVATARS_PER_PAGE) break;
+      if (added >= FALLBACK_PER_PAGE) break;
       const name = avatarName(p);
       if (!name || asked.has(name)) continue;
       asked.add(name);
-      avatarQueue.push(name);
+      fallbackQueue.push(name);
       added++;
     }
-    pumpAvatars();
+    pumpFallback();
   }
 
   let loadingMore = false;
@@ -430,7 +431,7 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
         if (n === 1) listCache.set(key, { items: merged.items, more: merged.more });
         // The favorites loaded so far are saved, and saved favorites the list has dropped are pruned.
         if (key === FAVORITES_KEY) reconcileFavorites(merged.items, !merged.more);
-        loadAvatars(list);
+        ensureAvatars(list);
         page.set(n);
         // A search with hits is done: its field hides, and the results and the header stay.
         if (n === 1 && list.length > 0 && key === searchKey(searchTerm() ?? "")) {

@@ -2,7 +2,7 @@
 // Secrets are redacted: Cookie and Set-Cookie values, and form fields named like a password.
 // Text bodies are printed (cut at BODY_LOG_LIMIT characters); binary bodies only give their size.
 
-import { consoleDebug } from "../debugLog";
+import { consoleDebug, debugEnabled } from "../debugLog";
 
 const BODY_LOG_LIMIT = 20_000;
 // Header names and form field names whose values are never printed.
@@ -97,12 +97,17 @@ export async function fetchLogged(
     if (name !== "set-cookie") consoleDebug(`HTTP   ${name}: ${value}`);
   });
   for (const line of response.headers.getSetCookie()) consoleDebug(`HTTP   set-cookie: ${redactSetCookie(line)}`);
-  const type = response.headers.get("content-type") ?? "";
-  if (/text|json|xml|javascript/i.test(type)) {
-    consoleDebug(`HTTP   body (${bytes.length} bytes):`);
-    printText(decode(bytes));
-  } else {
-    consoleDebug(`HTTP   body (${bytes.length} bytes, ${type || "no content type"}, not shown)`);
+  // Logging off is the normal case. Decoding a GB18030 page is pure-TS table
+  // work, and doing it a second time just to build a line nobody prints made
+  // every forum request noticeably slower on a phone.
+  if (debugEnabled) {
+    const type = response.headers.get("content-type") ?? "";
+    if (/text|json|xml|javascript/i.test(type)) {
+      consoleDebug(`HTTP   body (${bytes.length} bytes):`);
+      printText(decode(bytes));
+    } else {
+      consoleDebug(`HTTP   body (${bytes.length} bytes, ${type || "no content type"}, not shown)`);
+    }
   }
   return { response, bytes };
 }

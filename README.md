@@ -56,6 +56,7 @@
 - 「收藏 / 我的主题 / 我的回复 / 私信 / 历史」常驻侧栏，登录后即可使用。
 - 正文标题旁的**收藏星标**、每个楼层的**引用回复**、底部**回帖输入框**始终可见；引用块可跳转到对应楼层。
 - 回帖、引用回复与发新帖均可**添加图片或文件附件**：通过系统选择器挑选，图片自动缩放后上传，随帖一起发出；一次最多 5 个、单个不超过 10 MB。
+- 正文图片**点击可放大查看**：双指捏合或按钮缩放，可保存原图；正文显示站点压缩图并填满列宽，加载更快且显示尺寸不变。
 - 保留 B 站、抖音、小红书及常见视频链接的内嵌播放能力。
 - 版块顺序、排序方式、置顶开关、浏览历史等本地状态自动保存。
 
@@ -70,7 +71,7 @@
 
 | 项目 | 数值 |
 | --- | --- |
-| 当前版本 | 1.0.3（versionCode 5） |
+| 当前版本 | 1.0.4（versionCode 6） |
 | APK 体积 | 约 19.4 MB（单 arm64-v8a，release 签名） |
 | 应用自身逻辑包 | 约 232 KB（`assets/nsh/bundle.nshc`） |
 | 应用图标 | 约 13 KB |
@@ -87,7 +88,7 @@
 
 ## 安装
 
-1. 获取 release 签名的 `DiscoveryOS-AndroidPad-V1.0.3.apk`（可直接分发该文件；本仓库为私有，Releases 中的附件需要有仓库访问权限才能下载）。
+1. 获取 release 签名的 `DiscoveryOS-AndroidPad-V1.0.4.apk`（可直接分发该文件；本仓库为私有，Releases 中的附件需要有仓库访问权限才能下载）。
 2. 在 Android 平板上打开该文件；首次安装时系统可能要求为安装来源开启「允许安装未知应用」，授权一次即可。
 3. 应用支持 **arm64-v8a** 设备；32 位平板不在支持范围。
 4. 论坛内容需要登录后查看，请在应用内登录 4d4y 账号。
@@ -106,7 +107,7 @@ nsh package App.tsx --target android --icon icon.png --abi arm64-v8a \
 python scripts/slim_apk.py .nsh/out/DiscoveryOS.apk unsigned.apk
 zipalign -f -p 4 unsigned.apk aligned.apk
 apksigner sign --ks <release.jks> --ks-key-alias <alias> \
-  --out DiscoveryOS-AndroidPad-V1.0.3.apk aligned.apk
+  --out DiscoveryOS-AndroidPad-V1.0.4.apk aligned.apk
 ```
 
 `scripts/slim_apk.py` 只做两件事：把清单中的 `android:extractNativeLibs` 设为 `true`，并把 `lib/<abi>/*.so` 改为压缩存储；其余条目逐字节保留，应用代码与资源不受影响。重打包后必须用同一 release keystore 重新签名。

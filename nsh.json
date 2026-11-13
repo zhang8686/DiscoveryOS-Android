@@ -1,8 +1,8 @@
 {
   "name": "DiscoveryOS",
   "id": "com.Android.DiscoveryOS",
-  "version": "1.0.3",
-  "build": 5,
+  "version": "1.0.4",
+  "build": 6,
   "icon": "icon.png",
   "android": {
     "targetSdk": 35

@@ -14,6 +14,7 @@ import { timeAgo } from "../discuz/timeAgo";
 import { LoadingBar } from "./LoadingBar";
 import { notify } from "./toast";
 import { palette } from "./appearance";
+import { openImageViewer } from "./imageViewer";
 import { titleBarShown } from "./TitleBar";
 import { BrowserIcon, BubbleIcon, LinkIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
 import { ReplyCard } from "./ReplyCard";
@@ -486,6 +487,10 @@ export function Thread(props: {
                   styles={item().seq === 1 ? OP_TITLE_STYLES : undefined}
                   extensions={DISCUZ_EXTENSIONS}
                   renderCustom={renderDiscuzNode}
+                  onImagePress={(e) => {
+                    // A picture outside a link still opens the zoomable viewer.
+                    if (e.image.src) openImageViewer(e.image.src);
+                  }}
                   onLinkPress={(e) => {
                     // A 4d4y thread link opens in this column; a file the post attaches is saved to Downloads;
                     // any other link opens in the system browser.
@@ -493,6 +498,11 @@ export function Thread(props: {
                     const floor = floorFromLink(e.url);
                     if (floor) {
                       openFloor(floor.pid, floor.ptid);
+                      return;
+                    }
+                    // A picture opens the zoomable viewer instead of a browser.
+                    if (/\.(?:jpg|jpeg|png|gif|webp|bmp)(?:[?#]|$)/i.test(e.url)) {
+                      openImageViewer(e.url);
                       return;
                     }
                     const tid = threadIdFromLink(e.url);

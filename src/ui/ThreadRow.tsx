@@ -37,7 +37,7 @@ export function ThreadRow(props: {
       }}
     >
       {props.avatar() ? (
-        <Image src={props.avatar()!} style={{ width: 24, height: 24, borderRadius: 5 }} />
+        <Image src={props.avatar()!} fadeDuration={0} style={{ width: 24, height: 24, borderRadius: 5 }} />
       ) : null}
       <View style={{ flex: 1, gap: 2 }}>
         {/* A favorite's star is a span of the title's own text, so it sits on the first line and wraps with it. */}

@@ -6,6 +6,7 @@ import type { Profile } from "./src/discuz/parse";
 import { clearCredentials, loadCredentials, saveCredentials } from "./src/discuz/credentials";
 import { hasSavedCookies, reloadCookies } from "./src/discuz/cookies";
 import { initVault } from "./src/discuz/vault";
+import { ImageViewer } from "./src/ui/imageViewer";
 import { Forum } from "./src/ui/Forum";
 import { notify, Toaster } from "./src/ui/toast";
 import { DownloadIcon, ThemeIcon } from "./src/ui/icons";
@@ -502,6 +503,7 @@ function App() {
       {debugEnabled && cookieImportOpen() ? <CookieImportDialog /> : null}
       {aboutOpen() ? <AboutDialog /> : null}
       <Toaster />
+      <ImageViewer />
 
     </View>
   );

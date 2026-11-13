@@ -208,31 +208,33 @@ test("keeps paging when a page repeats a sticky thread and adds new ones", () =>
   expect(mergePage(first, [{ id: "1" }, { id: "3" }])).toEqual({ items: [{ id: "1" }, { id: "2" }, { id: "3" }], more: true });
 });
 
-test("uses the real picture from file= when src is a placeholder", () => {
+test("uses the compressed display picture when src is a placeholder", () => {
   expect(fixImages('<img src="images/loading.gif" file="attach/1.jpg" width="100">')).toBe(
-    '<p><img src="attach/1.jpg" width="100%"></p>',
+    '<p><a href="https://www.4d4y.com/forum/attach/1.jpg"><img src="attach/1.jpg" width="100%"></a></p>',
   );
-  expect(fixImages('<img src="attach/full.jpg" file="attach/small.jpg">')).toBe('<p><img src="attach/full.jpg" width="100%"></p>');
+  expect(fixImages('<img src="attach/full.jpg" file="attach/small.jpg">')).toBe(
+    '<p><a href="https://www.4d4y.com/forum/attach/full.jpg"><img src="attach/full.jpg" width="100%"></a></p>',
+  );
   expect(fixImages('<img src="smilies/a.gif">')).toBe('<img src="smilies/a.gif">');
 });
 
-test("shows the original picture, not Discuz's thumbnail", () => {
+test("links a shrunken thumbnail to its original without shrinking the drawn size", () => {
   expect(fixImages('<img src="https://img02.4d4y.com/forum/attachments/d/a.jpg.thumb.jpg" border="0">')).toBe(
-    '<p><img src="https://img02.4d4y.com/forum/attachments/d/a.jpg" border="0" width="100%"></p>',
+    '<p><a href="https://img02.4d4y.com/forum/attachments/d/a.jpg.thumb.jpg"><img src="https://img02.4d4y.com/forum/attachments/d/a.jpg.thumb.jpg" border="0" width="100%"></a></p>',
   );
 });
 
 test("drops Discuz's size on pictures but keeps it on smilies", () => {
   expect(fixImages('<img src="attach/a.jpg" width="31" height="41" border="0">')).toBe(
-    '<p><img src="attach/a.jpg" border="0" width="100%"></p>',
+    '<p><a href="https://www.4d4y.com/forum/attach/a.jpg"><img src="attach/a.jpg" border="0" width="100%"></a></p>',
   );
   expect(fixImages('<img src="images/smilies/x.gif" width="20">')).toBe('<img src="images/smilies/x.gif" width="20">');
 });
 
-test("takes the full picture from a zoom link", () => {
+test("links the small copy to the full picture from a zoom link", () => {
   expect(
     fixImages(`<a href="javascript:;"><img onclick="zoom(this, 'attachments/d/a.jpg')" src="attachments/d/a.jpg.thumb.jpg" border="0"></a>`),
-  ).toBe('<p><img src="attachments/d/a.jpg" border="0" width="100%"></p>');
+  ).toBe('<p><a href="https://www.4d4y.com/forum/attachments/d/a.jpg"><img src="attachments/d/a.jpg.thumb.jpg" border="0" width="100%"></a></p>');
 });
 
 test("drops hidden attachment spans, their menus and Discuz icons", () => {
@@ -240,12 +242,12 @@ test("drops hidden attachment spans, their menus and Discuz icons", () => {
     'a<span style="position: absolute; display: none" id="attach_1"><img src="https://x/images/default/attachimg.gif" border="0"></span>' +
     '<a href="javascript:;"><img onclick="zoom(this, \'https://x/a.jpg\')" src="https://x/a.jpg.thumb.jpg"></a>' +
     '<div class="t_attach" id="m" style="position: absolute; display: none">\n<a href="x">下载</a>\n<div class="t_smallfont">2026</div>\n\n</div>\n<br />b';
-  expect(fixImages(html)).toBe('a<p><img src="https://x/a.jpg" width="100%"></p>\n<br />b');
+  expect(fixImages(html)).toBe('a<p><a href="https://x/a.jpg"><img src="https://x/a.jpg.thumb.jpg" width="100%"></a></p>\n<br />b');
 });
 
 test("turns Discuz's layout table into blocks so pictures keep the column width", () => {
   expect(fixImages('<table><tr><td class="t_msgfont">a<img src="x.jpg"></td></tr></table>')).toBe(
-    '<div><div><div>a<p><img src="x.jpg" width="100%"></p></div></div></div>',
+    '<div><div><div>a<p><a href="https://www.4d4y.com/forum/x.jpg"><img src="x.jpg" width="100%"></a></p></div></div></div>',
   );
 });
 

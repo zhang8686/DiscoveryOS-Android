@@ -522,23 +522,32 @@ export function fixImages(html: string): string {
     const file = /\bfile="([^"]+)"/i.exec(attrs)?.[1];
     const zoom = /zoom\(this,\s*'([^']+)'/i.exec(attrs)?.[1];
     const placeholder = !src || /loading|none\.gif|common\/|smilies\//i.test(src);
-    const chosen = zoom ?? (placeholder && file ? file : src);
-    if (!chosen) return whole;
-    // Discuz's own icons (`images/default/...`) are not content.
-    if (/images\/(default|attachicons|common)\//i.test(chosen)) return "";
-    // Discuz's `x.jpg.thumb.jpg` is the small copy of `x.jpg`: show the original.
-    const picture = chosen.replace(/\.thumb\.[a-z0-9]+$/i, "");
-    const smiley = /smilies\//i.test(picture);
-    let kept = attrs
+    // `zoom()` points at the multi-megabyte original. The page already carries
+    // a small copy for display; use it here and keep the original only for the
+    // full-screen viewer, so a picture appears quickly on a phone connection.
+    const small = placeholder ? (file ?? src) : src;
+    const full = zoom ?? small;
+    if (!small) return whole;
+    if (/images\/(default|attachicons|common)\//i.test(small)) return "";
+    if (/smilies\//i.test(small)) {
+      const kept = attrs
+        .replace(/\bsrc="[^"]*"/i, "")
+        .replace(/\bfile="[^"]*"/i, "")
+        .replace(/\bonclick="[^"]*"/i, "")
+        .replace(/\s+/g, " ").trim();
+      return `<img src="${small}"${kept ? " " + kept : ""}>`;
+    }
+    // The site's own compressed display copy loads fast; width=100% keeps the
+    // drawn size unchanged whatever the source's pixel size. A tap on the
+    // picture opens the original in the zoomable viewer through onLinkPress.
+    const original = absoluteUrl(full ?? small, HOST_BASE);
+    const kept = attrs
       .replace(/\bsrc="[^"]*"/i, "")
       .replace(/\bfile="[^"]*"/i, "")
-      .replace(/\bonclick="[^"]*"/i, "");
-    if (smiley) {
-      kept = kept.replace(/\s+/g, " ").trim();
-      return `<img src="${picture}"${kept ? " " + kept : ""}>`;
-    }
-    kept = kept.replace(/\s(width|height)="[^"]*"/gi, "").replace(/\s+/g, " ").trim();
-    return `<p><img src="${picture}"${kept ? " " + kept : ""} width="100%"></p>`;
+      .replace(/\bonclick="[^"]*"/i, "")
+      .replace(/\s(width|height)="[^"]*"/gi, "")
+      .replace(/\s+/g, " ").trim();
+    return `<p><a href="${original}"><img src="${small}"${kept ? " " + kept : ""} width="100%"></a></p>`;
   });
 }
 
