@@ -70,7 +70,7 @@
 
 | 项目 | 数值 |
 | --- | --- |
-| 当前版本 | 1.1.0（versionCode 2） |
+| 当前版本 | 1.0.1（versionCode 3） |
 | APK 体积 | 约 47 MB（单 arm64-v8a，release 签名） |
 | 应用自身逻辑包 | 约 232 KB（`assets/nsh/bundle.nshc`） |
 | 应用图标 | 约 13 KB |
@@ -86,7 +86,7 @@
 
 ## 安装
 
-1. 获取 release 签名的 `DiscoveryOS.apk`（可直接分发该文件；本仓库为私有，Releases 中的附件需要有仓库访问权限才能下载）。
+1. 获取 release 签名的 `DiscoveryOS-AndroidPad-V1.0.1.apk`（可直接分发该文件；本仓库为私有，Releases 中的附件需要有仓库访问权限才能下载）。
 2. 在 Android 平板上打开该文件；首次安装时系统可能要求为安装来源开启「允许安装未知应用」，授权一次即可。
 3. 应用支持 **arm64-v8a** 设备；32 位平板不在支持范围。
 4. 论坛内容需要登录后查看，请在应用内登录 4d4y 账号。
