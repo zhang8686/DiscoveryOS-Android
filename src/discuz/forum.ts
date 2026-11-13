@@ -50,10 +50,24 @@ export async function loadPosts(fid: string, page = 1, order: SortOrder = "lastp
   if (DEMO) return DEMO_POSTS.filter((p) => order === "dateline" ? true : true)
     .sort((a, b) => (order === "dateline" ? String(b.at ?? "") : String(b.lastReplyAt ?? ""))
       .localeCompare(order === "dateline" ? String(a.at ?? "") : String(a.lastReplyAt ?? "")));
-  const html = await request("GET", "forumdisplay.php", {
-    query: [["fid", fid], ["page", String(page)], ["orderby", order], ["ascdesc", "desc"]],
-  });
-  return parsePosts(html);
+  // Match the forum's web sort exactly (the URLs the user supplied):
+  //   post time  -> forumdisplay.php?fid=2&filter=&orderby=dateline
+  //   reply time -> forumdisplay.php?fid=2&filter=2592000&orderby=lastpost
+  // `filter=2592000` is the 30-day window the site applies to the reply-time order. The web
+  // URLs send no `ascdesc`, so this sends none either: the site's own default for both
+  // orders is newest first, and adding `ascdesc` risks a different result.
+  const query: [string, string][] = [
+    ["fid", fid],
+    ["page", String(page)],
+    ["orderby", order],
+    ["filter", order === "lastpost" ? "2592000" : ""],
+  ];
+  const html = await request("GET", "forumdisplay.php", { query });
+  // The forum's own order is kept as returned — the same order its web page shows. The 微信模式
+  // reference script (which the user pointed to) trusts `orderby` and never re-sorts. `dateline`
+  // already comes newest-thread-first to the MINUTE. The parse is told the order so a dateline page
+  // does not get the lastpost-only "pinned" guess (which hid the newest threads).
+  return parsePosts(html, order);
 }
 
 /**

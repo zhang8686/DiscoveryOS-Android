@@ -4,15 +4,29 @@ import { signal, Text, View, WebView, type WebViewRef } from "nsh";
 import { type BiliVideoId } from "../bilibili/links";
 import { resolveBiliShort } from "../bilibili/resolve";
 import { biliSignedIn, loadBiliSession } from "../bilibili/session";
-import { playerRatio, videoShape, type VideoShape } from "../bilibili/video";
 import { palette } from "./appearance";
 import { BiliLogin } from "./BiliLogin";
 import { ShortLinkPlayer } from "./ShortLinkPlayer";
-import { VIDEO_FULLSCREEN_SCRIPT } from "./webviewFullscreen";
 
+// The "blackboard" HTML5 mobile player: Bilibili's embed that is just the video player (no "下载 App"
+// bar of `player.html`), though it still draws a small top promo bar on mobile.
 const playerUrl = (video: BiliVideoId) =>
-  `https://player.bilibili.com/player.html?${"bvid" in video ? `bvid=${video.bvid}` : `aid=${video.aid}`}&page=1&high_quality=1&autoplay=0`;
+  `https://www.bilibili.com/blackboard/html5mobileplayer.html?${"bvid" in video ? `bvid=${video.bvid}` : `aid=${video.aid}`}&page=1&autoplay=0&danmaku=0&high_quality=1`;
 const videoLabel = (video: BiliVideoId) => ("bvid" in video ? video.bvid : `av${video.aid}`);
+
+// The box is a fixed 16:11 (a little taller than 16:9) so the player's top bar has room AND the video
+// still shows whole, and — crucially — the height is known when the layer is laid out, so the thread's
+// list measures the card at this height at once. A height set later from JS (width measured after
+// layout) was NOT re-measured by the list, so the card clipped the bottom (the "layer frame" cut it).
+const ASPECT = 16 / 11;
+
+// Runs inside the page: keeps the video contained so nothing is cropped.
+const FIT_SCRIPT = `(() => {
+  const st = document.createElement('style');
+  st.textContent = 'html,body{margin:0!important;padding:0!important;height:100%!important;overflow:hidden!important;background:#000!important;}'
+    + 'video{object-fit:contain!important;max-width:100%!important;max-height:100%!important;}';
+  (document.head || document.documentElement).appendChild(st);
+})();`;
 
 /** A short link (b23.tv) to a Bilibili video: resolved to the video, then shown as a BiliPlayer. */
 export function BiliShortPlayer(props: { url: string }) {
@@ -21,7 +35,7 @@ export function BiliShortPlayer(props: { url: string }) {
       url={props.url}
       resolve={resolveBiliShort}
       play={(video) => <BiliPlayer video={video} />}
-      fallbackSize={{ aspectRatio: 16 / 9 }}
+      fallbackSize={{ aspectRatio: ASPECT }}
     />
   );
 }
@@ -29,28 +43,20 @@ export function BiliShortPlayer(props: { url: string }) {
 export function BiliPlayer(props: { video: BiliVideoId }) {
   const started = signal(false);
   const loginShown = signal(false);
-  // 16:9 until the video's own size arrives, so the card keeps its shape while loading.
-  const ratio = signal(playerRatio({ width: 16, height: 9 }));
   let player!: WebViewRef;
   loadBiliSession();
-  videoShape(props.video)
-    .then((shape: VideoShape) => ratio.set(playerRatio(shape)))
-    .catch(() => undefined);
+
+  const size = () => ({ aspectRatio: ASPECT, backgroundColor: "#000", borderRadius: 8 });
 
   return (
     <View style={{ gap: 8, alignSelf: "stretch" }}>
       {started() ? (
-        <WebView
-          ref={player}
-          src={playerUrl(props.video)}
-          injectedJavaScript={VIDEO_FULLSCREEN_SCRIPT}
-          style={{ aspectRatio: ratio(), backgroundColor: "#000", borderRadius: 8 }}
-        />
+        <WebView ref={player} src={playerUrl(props.video)} injectedJavaScript={FIT_SCRIPT} style={size()} />
       ) : (
         <View
           onPress={() => started.set(true)}
           accessibilityLabel={`Play Bilibili video ${videoLabel(props.video)}`}
-          style={{ aspectRatio: ratio(), borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#000" }}
+          style={{ ...size(), alignItems: "center", justifyContent: "center" }}
         >
           <Text style={{ fontSize: 16, color: "#fff" }}>{`▶ 播放 B 站视频 ${videoLabel(props.video)}`}</Text>
         </View>

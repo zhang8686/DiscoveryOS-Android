@@ -58,7 +58,7 @@ export function ImageViewer() {
         centerContent={true}
         contentStyle={{ alignItems: "center", justifyContent: "center", padding: 12 }}
       >
-        <Image src={viewerImage()!.url} fadeDuration={0} style={{ width: w, height: Math.round(w * 0.7), borderRadius: 6 }} />
+        <Image src={viewerImage()!.url} fadeDuration={0} objectFit="contain" style={{ width: w, height: Math.round(w * 0.75), borderRadius: 6 }} />
       </Scroll>
     </View>
   ) : null;

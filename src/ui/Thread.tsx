@@ -1,6 +1,6 @@
 // A thread's replies, pages, quote and reply draft (`PostDetailView` of the
 // Swift app). The draft is kept per thread in the app's storage.
-import { Clipboard, keymap, List, signal, Storage, Text, View, type PasteEvent, type ListRef } from "nsh";
+import { Clipboard, createAnimatedValue, keymap, List, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef } from "nsh";
 import { Dialog, TextView } from "nsh/base";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
@@ -40,6 +40,12 @@ const draftKey = (tid: string) => `draft:${tid}`;
 // How long a `g` waits for the second `g` of `gg`.
 const G_WAIT_MS = 1000;
 
+// The heavy HTML transform (fixDiscuzMarkup + fixImages + absolutize) per reply id, cached at
+// module scope so it survives component remounts and re-renders: scrolling, re-rendering rows on
+// hover, and re-opening a thread do not re-parse every body. Cleared on a full (page 1) reload,
+// which is exactly when the forum may have sent fresh bodies (after a reply or an edit).
+const htmlCache = new Map<string, string>();
+
 // The thread's title shows in the header at the large size; the first post's
 // own heading (its title, in the body) takes the small size the header had.
 const OP_TITLE_STYLES = {
@@ -62,6 +68,8 @@ export function Thread(props: {
   /** Opens a thread; with `pid`, at that floor (a floor link to another thread). */
   onOpenThread?: (tid: string, pid?: string) => void;
   onBack?: () => void;
+  /** A right swipe in the body goes back (a thread opened from a link, or the list in portrait). */
+  onSwipeBack?: () => void;
   shortcutsOpen?: () => boolean;
   /** The floor a link opened in this thread, shown first. */
   focusPid?: string;
@@ -83,6 +91,52 @@ export function Thread(props: {
   // The thread's page on the forum, for the browser.
   const threadUrl = () => `${HOST}viewthread.php?tid=${props.post.id}`;
 
+  // The header bar's height in landscape, where it floats over the body. NSH animates only
+  // `opacity` and `transform` natively (not `height`/`maxHeight`), so the bar cannot shrink its
+  // box; instead it is an overlay that slides up via `translateY`. The list keeps the full height
+  // behind it (its content only starts below the bar via a padding), so as the bar slides away the
+  // scrolling text flows into the space it vacates — the bar truly gives the room to the body.
+  const TITLE_H = 84;
+  // Landscape: tuck the title bar away while scrolling the posts, to give the body more room.
+  // NSH's `List` has no `onScroll`; it feeds the scroll offset into `scrollValue`, which we
+  // interpolate into the bar's translate and opacity so it slides away as you scroll down
+  // and returns as you scroll back to the top. Portrait keeps the bar in the normal layout.
+  const scrollOffset = createAnimatedValue(0);
+  const isLandscape = () => windowSize().width > windowSize().height;
+  const titleShift = () =>
+    isLandscape()
+      ? scrollOffset.interpolate({ inputRange: [0, 80], outputRange: [0, -TITLE_H], extrapolate: "clamp" })
+      : 0;
+  const titleOpacity = () =>
+    isLandscape()
+      ? scrollOffset.interpolate({ inputRange: [0, 80], outputRange: [1, 0], extrapolate: "clamp" })
+      : 1;
+
+  // A right swipe in the body goes back. `panActivation` fails the gesture on a small vertical move
+  // (so the list still scrolls and small gestures do not trigger it); only a clear, long rightward
+  // swipe counts, so it is not easy to fire by accident.
+  const backPan = createAnimatedValue(0);
+  const onSwipeEnd = (e: any) => {
+    const dx = e?.translation?.x ?? 0;
+    const vx = e?.velocity?.x ?? 0;
+    if (!e?.cancelled && (dx > 150 || vx > 1700)) props.onSwipeBack?.();
+    backPan.set(0);
+  };
+
+  // (The HTML transform cache is module-level, declared above the component, so it survives
+  // remounts and makes re-rendering rows and re-opening a thread instant.)
+  function bodyHtml(r: Reply): string {
+    let h = htmlCache.get(r.id);
+    if (h === undefined) {
+      h = absolutize(trimLeadingBlanks(fixDiscuzMarkup(fixImages(r.body))), HOST);
+      htmlCache.set(r.id, h);
+    }
+    return h;
+  }
+
+  // True until the first reply page has loaded (or failed), so the thread shows a spinner instead of blank.
+  const firstLoad = signal(true);
+
   let loadingMore = false;
   const loadingMoreShown = signal(false);
 
@@ -96,9 +150,18 @@ export function Thread(props: {
         more.set(merged.more);
         page.set(n);
         failedPage.set(null);
+        if (n === 1) {
+          firstLoad.set(false);
+          // A fresh thread starts at the top with its title showing. The transform cache is KEPT:
+          // a cached reply page carries the same bodies, so re-transforming every reply on each
+          // open only made opening a thread slower. It is cleared when a reply, edit or delete
+          // changes the bodies (see send/saveEdit/removeReply, which call it before reloading).
+          scrollOffset.set(0);
+        }
       })
       .catch((e) => {
         failedPage.set(n);
+        if (n === 1) firstLoad.set(false);
       })
       .finally(() => {
         loadingMore = false;
@@ -139,6 +202,7 @@ export function Thread(props: {
     // the reply even when its answer was unclear, and the list should show what it holds.
     // The thread's cached pages are stale now, so they are asked again.
     clearThreadReplyPages(props.post.id);
+    htmlCache.clear();
     replies.set([]);
     more.set(true);
     fetchPage(1);
@@ -169,9 +233,12 @@ export function Thread(props: {
         if (found.title) title.set(found.title);
         if (found.fid && !fid()) fid.set(found.fid);
         replies.set(found.replies);
+        htmlCache.clear();
         page.set(found.page);
         more.set(found.replies.length > 0);
+        firstLoad.set(false);
       } catch (e) {
+        firstLoad.set(false);
         notify("floor-error", "无法打开该帖。");
         return;
       }
@@ -236,6 +303,7 @@ export function Thread(props: {
       sending.set(false);
     }
     clearThreadReplyPages(props.post.id);
+    htmlCache.clear();
     replies.set([]);
     more.set(true);
     fetchPage(1);
@@ -266,6 +334,7 @@ export function Thread(props: {
     // Reload the replies whether or not the save reported success, as after a reply: the cached
     // pages hold the old text, so they are dropped and the thread is asked again.
     clearThreadReplyPages(props.post.id);
+    htmlCache.clear();
     replies.set([]);
     more.set(true);
     fetchPage(1);
@@ -364,12 +433,32 @@ export function Thread(props: {
     .catch(() => undefined);
 
   return (
-    <View style={{ flex: 1, alignSelf: "stretch" }}>
+    <View
+      pan={props.onSwipeBack ? { x: backPan } : undefined}
+      panActivation={props.onSwipeBack ? { activeOffsetX: 48, failOffsetY: 12 } : undefined}
+      onPanEnd={props.onSwipeBack ? onSwipeEnd : undefined}
+      style={{ flex: 1, alignSelf: "stretch", overflow: "hidden" }}
+    >
       {/* Under the title bar the title sits in the bar's caption area (the column extends up into it), centred
           on the bar's 44pt; it drags the window where nothing presses. With no bar, it keeps the top inset. */}
       <View
         desktop={{ windowDrag: true }}
-        style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 12, paddingTop: titleBarShown() ? 18 : 20 }}
+        style={{
+          // Landscape: float the bar over the body (so the body keeps the full height) so it can
+          // slide away on scroll and let the text take its place. Portrait: a normal bar above.
+          ...(isLandscape() ? { position: "absolute", left: 0, right: 0, top: 0, zIndex: 10 } : {}),
+          height: isLandscape() ? TITLE_H : undefined,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 12,
+          paddingHorizontal: 12,
+          paddingVertical: isLandscape() ? 0 : 8,
+          paddingTop: isLandscape() ? 0 : titleBarShown() ? 18 : 20,
+          backgroundColor: palette().bg,
+          transform: [{ translateY: titleShift() }],
+          opacity: titleOpacity(),
+          overflow: "hidden",
+        }}
       >
         {/* Back sits in the row, first, so the icons after it move right with it. */}
         {props.onBack ? (
@@ -423,25 +512,14 @@ export function Thread(props: {
           />
         </View>
       </View>
-      {failedPage() !== null ? (
-        <View style={{ alignItems: "center", padding: 16, gap: 8 }}>
-          <Text style={{ fontSize: 13, color: palette().muted }}>回复加载失败。</Text>
-          <View
-            onPress={() => fetchPage(failedPage()!)}
-            accessibilityLabel="刷新"
-            style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, borderWidth: 1, borderColor: palette().border }}
-          >
-            <Text style={{ fontSize: 13, color: palette().text }}>刷新</Text>
-          </View>
-        </View>
-      ) : null}
       {/* A virtualized list: only the replies near the viewport exist, and their views are
           reused as the user scrolls. Each row reads its reply through `item()`. */}
       <List
         style={{ flex: 1 }}
-        contentStyle={{ padding: 12, gap: 12 }}
+        contentStyle={{ padding: 12, gap: 12, paddingTop: isLandscape() ? TITLE_H + 4 : 12 }}
         each={replies()}
         estimatedItemSize={180}
+        scrollValue={scrollOffset}
         onLoadMore={loadMore}
         footer={() => <View>{loadingMoreShown() ? <LoadingBar /> : null}</View>}
         ref={(n: ListRef | null) => {
@@ -483,36 +561,42 @@ export function Thread(props: {
             body={
               <View style={{ gap: 12, alignSelf: "stretch" }}>
                 <TextView
-                  html={absolutize(trimLeadingBlanks(fixDiscuzMarkup(fixImages(item().body))), HOST)}
+                  html={bodyHtml(item())}
                   styles={item().seq === 1 ? OP_TITLE_STYLES : undefined}
                   extensions={DISCUZ_EXTENSIONS}
                   renderCustom={renderDiscuzNode}
-                  onImagePress={(e) => {
-                    // A picture outside a link still opens the zoomable viewer.
-                    if (e.image.src) openImageViewer(e.image.src);
+                  onImagePress={(e: any) => {
+                    // A picture not in a link opens the zoomable viewer. The original (full-size)
+                    // URL the page carried rides in `title`; `src` is the compressed display copy.
+                    const img = e?.image ?? e;
+                    const src: string = img?.src ?? "";
+                    const full: string = img?.title || src;
+                    if (full || src) openImageViewer(full || src, src);
                   }}
-                  onLinkPress={(e) => {
+                  onLinkPress={(e: any) => {
                     // A 4d4y thread link opens in this column; a file the post attaches is saved to Downloads;
-                    // any other link opens in the system browser.
+                    // any other link opens in the system browser. A picture (or its attachment) opens the zoomable viewer.
                     // A quote's arrow goes to its floor (see `openFloor`).
-                    const floor = floorFromLink(e.url);
+                    const url: string | undefined = e?.url ?? e?.href ?? e?.link;
+                    if (!url) return;
+                    const floor = floorFromLink(url);
                     if (floor) {
                       openFloor(floor.pid, floor.ptid);
                       return;
                     }
-                    // A picture opens the zoomable viewer instead of a browser.
-                    if (/\.(?:jpg|jpeg|png|gif|webp|bmp)(?:[?#]|$)/i.test(e.url)) {
-                      openImageViewer(e.url);
+                    // A picture, or a Discuz attachment that is really an image, opens the zoomable viewer.
+                    if (/\.(?:jpg|jpeg|png|gif|webp|bmp)(?:[?#]|$)/i.test(url) || isAttachmentUrl(url)) {
+                      openImageViewer(url);
                       return;
                     }
-                    const tid = threadIdFromLink(e.url);
+                    const tid = threadIdFromLink(url);
                     if (tid && props.onOpenThread) {
                       props.onOpenThread(tid);
-                    } else if (isAttachmentUrl(e.url)) {
-                      const file = attachmentLinks(item().body).find((a) => absoluteUrl(a.url, HOST) === e.url);
-                      void downloadAttachment(e.url, file?.name ?? "download");
+                    } else if (isAttachmentUrl(url)) {
+                      const file = attachmentLinks(item().body).find((a) => absoluteUrl(a.url, HOST) === url);
+                      void downloadAttachment(url, file?.name ?? "download");
                     } else {
-                      void openLink(e.url);
+                      void openLink(url);
                     }
                   }}
                 />
@@ -530,6 +614,29 @@ export function Thread(props: {
           />
         )}
       </List>
+      {/* Loading and failure show centred over the list (which is empty while they show). */}
+      {firstLoad() && replies().length === 0 && failedPage() === null ? (
+        <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+          <View style={{ alignItems: "center", paddingVertical: 16, gap: 8 }}>
+            <LoadingBar />
+            <Text style={{ fontSize: 12, color: palette().muted }}>正在加载帖子…</Text>
+          </View>
+        </View>
+      ) : null}
+      {failedPage() !== null ? (
+        <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, alignItems: "center", justifyContent: "center" }}>
+          <View style={{ alignItems: "center", padding: 16, gap: 8 }}>
+            <Text style={{ fontSize: 13, color: palette().muted }}>回复加载失败。</Text>
+            <View
+              onPress={() => fetchPage(failedPage()!)}
+              accessibilityLabel="刷新"
+              style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, borderWidth: 1, borderColor: palette().border }}
+            >
+              <Text style={{ fontSize: 13, color: palette().text }}>刷新</Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
       {/* The reply box is always visible, as on the desktop. Signed out, sending
         a reply opens the sign-in sheet instead of silently doing nothing. */}
       <View style={{ alignSelf: "stretch" }}>

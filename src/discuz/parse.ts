@@ -82,7 +82,7 @@ export function parseChannelLinks(html: string): Channel[] {
 }
 
 /** The threads on a forum page (`DiscuzAPI.loadPosts`). */
-export function parsePosts(html: string): Post[] {
+export function parsePosts(html: string, order: "dateline" | "lastpost" = "lastpost"): Post[] {
   const posts: Post[] = [];
   // Discuz marks sticky threads with <tbody id="stickythread_<tid>">. Parse it directly:
   // the old time-based guess breaks as soon as the list is sorted by dateline.
@@ -95,12 +95,18 @@ export function parsePosts(html: string): Post[] {
       true,
     );
     if (col.length === 0) continue;
+    // The author cell's post date sometimes carries the exact time in a `title`
+    // (`<em title="2026-11-13 23:05">2026-11-13</em>`, or a `<span>` inside it). When it does, the
+    // full date-time is used for the "by post time" order and label so it matches the web to the
+    // minute; when the page gives only the date, the date is used.
+    const authorCell = /<td[^>]*class="author"[^>]*>([\s\S]*?)<\/td>/i.exec(row)?.[1] ?? "";
+    const atFull = /title="(\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)"/.exec(authorCell)?.[1]?.trim();
     posts.push({
       id: col[0],
       title: htmlDecode(col[1]),
       uid: col[2],
       author: removePercentEncoding(col[3]),
-      at: col[4],
+      at: atFull ?? col[4],
       replies: Number(col[5]) || 0,
       views: Number(col[6]) || 0,
       lastReplyBy: removePercentEncoding(col[7]),
@@ -108,6 +114,12 @@ export function parsePosts(html: string): Post[] {
       pinned: stickyIds.has(col[0]) || undefined,
     });
   }
+  // Sticky threads carry `stickythread_` ids whatever the order, so those are honoured directly.
+  // On a `lastpost` page with none, the top run is guessed by last-reply times. On a `dateline`
+  // page that guess is wrong — last-reply times are not monotonic there — and it would mark the
+  // newest threads "pinned", which the list then hides under "hidden pinned", making the list look
+  // mis-sorted. So the guess runs only for lastpost.
+  if (order === "dateline") return posts;
   return stickyIds.size > 0 ? posts : markPinned(posts);
 }
 
@@ -538,16 +550,21 @@ export function fixImages(html: string): string {
       return `<img src="${small}"${kept ? " " + kept : ""}>`;
     }
     // The site's own compressed display copy loads fast; width=100% keeps the
-    // drawn size unchanged whatever the source's pixel size. A tap on the
-    // picture opens the original in the zoomable viewer through onLinkPress.
+    // drawn size unchanged whatever the source's pixel size. The picture is kept
+    // STANDALONE (not wrapped in an <a>): the text view reports a press on an image
+    // that is not in a link through `onImagePress`, which opens the zoomable viewer —
+    // a link-wrapped image reported no press on the tablet. The original URL rides in
+    // `title` so the viewer can show the full-size picture.
     const original = absoluteUrl(full ?? small, HOST_BASE);
     const kept = attrs
       .replace(/\bsrc="[^"]*"/i, "")
       .replace(/\bfile="[^"]*"/i, "")
       .replace(/\bonclick="[^"]*"/i, "")
+      .replace(/\btitle="[^"]*"/i, "")
+      .replace(/\balt="[^"]*"/i, "")
       .replace(/\s(width|height)="[^"]*"/gi, "")
       .replace(/\s+/g, " ").trim();
-    return `<p><a href="${original}"><img src="${small}"${kept ? " " + kept : ""} width="100%"></a></p>`;
+    return `<p><img src="${small}" title="${escapeAttr(original)}"${kept ? " " + kept : ""} width="100%"></p>`;
   });
 }
 
@@ -567,6 +584,10 @@ function closingDivEnd(html: string, from: number): number {
 }
 
 const escapeHtml = (text: string): string => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** A URL for an HTML attribute value: `&`, `"`, `<` and `>` escaped so a query string survives. */
+const escapeAttr = (text: string): string =>
+  text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /** The lines of a Discuz `[code]` block: each `<li>` is a line (closing tag optional), with the
  * copy button's label dropped and the newlines the markup puts around each line removed. */

@@ -36,7 +36,9 @@ async function load(query: string): Promise<VideoShape> {
   }
 }
 
-/** Width over height, kept within a range so a very tall or very wide video cannot fill the column. */
+/** Width over height, kept within a range so a very tall or very wide video cannot fill the column.
+ * The range is wide (0.4…4.0) so ordinary widescreen films (~2.35:1) keep their true ratio and are
+ * not given too short a box, which cut a sliver off the bottom of the player. */
 export function playerRatio(shape: VideoShape): number {
-  return Math.min(Math.max(shape.width / shape.height, 0.75), 2.4);
+  return Math.min(Math.max(shape.width / shape.height, 0.4), 4.0);
 }

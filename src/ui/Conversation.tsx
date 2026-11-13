@@ -1,7 +1,7 @@
 // The private messages with one correspondent, shown in the open-thread column in the same
 // post style as a thread: one card per message, the time in its meta line, and the thread's
 // reply box under them.
-import { effect, List, signal, Storage, Text, untracked, View } from "nsh";
+import { createAnimatedValue, effect, List, signal, Storage, Text, untracked, View } from "nsh";
 import { TextView } from "nsh/base";
 import { loadPmConversation, sendPm } from "../discuz/forum";
 import { absolutize, absoluteUrl, fixImages, threadIdFromLink, trimLeadingBlanks, type PmMessage, type Post } from "../discuz/parse";
@@ -15,12 +15,22 @@ import { ReplyCard } from "./ReplyCard";
 const draftKey = (uid: string) => `pm-draft:${uid}`;
 
 // `onOpenThread` takes a press on a link to a 4d4y thread, which the thread column then shows.
-export function Conversation(props: { peer: () => Post; onOpenThread?: (tid: string) => void }) {
+// `onSwipeBack` returns to the list on a right swipe, as a thread does.
+export function Conversation(props: { peer: () => Post; onOpenThread?: (tid: string) => void; onSwipeBack?: () => void }) {
   const messages = signal<PmMessage[] | null>(null);
   const draft = signal("");
   const sending = signal(false);
   // Each load gets a number; a reply to an earlier load is dropped when a newer one started.
   let latest = 0;
+
+  // A right swipe goes back (the same gesture and thresholds as a thread's body).
+  const backPan = createAnimatedValue(0);
+  const onSwipeEnd = (e: any) => {
+    const dx = e?.translation?.x ?? 0;
+    const vx = e?.velocity?.x ?? 0;
+    if (!e?.cancelled && (dx > 150 || vx > 1700)) props.onSwipeBack?.();
+    backPan.set(0);
+  };
 
   function load(uid: string) {
     const token = ++latest;
@@ -69,7 +79,12 @@ export function Conversation(props: { peer: () => Post; onOpenThread?: (tid: str
   });
 
   return (
-    <View style={{ flex: 1 }}>
+    <View
+      pan={props.onSwipeBack ? { x: backPan } : undefined}
+      panActivation={props.onSwipeBack ? { activeOffsetX: 48, failOffsetY: 12 } : undefined}
+      onPanEnd={props.onSwipeBack ? onSwipeEnd : undefined}
+      style={{ flex: 1 }}
+    >
       <View style={{ padding: 12, flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
         <Text style={{ fontSize: 22, fontWeight: 600, color: palette().text }}>{`和 ${props.peer().title} 的对话`}</Text>
       </View>

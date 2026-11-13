@@ -2,11 +2,13 @@
 // channels | a channel's threads (or favorites) | the open thread.
 // Components run once, so the views switch inside JSX, not by early return.
 import { BackHandler } from "nsh/mobile";
-import { cleanup, effect, Overlay, type ViewRef, List, Scroll, signal, Storage, Text, untracked, View, windowSize, type JSX } from "nsh";
+import { cleanup, computed, effect, Overlay, type ViewRef, List, Scroll, signal, Storage, Text, untracked, View, windowSize, type JSX } from "nsh";
+import { Dialog } from "nsh/base";
+import { hideThread, isHidden } from "./hiddenThreads";
 import { onEscape } from "./escape";
 import { ShortcutsHelp } from "./ShortcutsHelp";
 import { shortcutRows, useCommand } from "./commands";
-import { DEMO, clearReplyPageCache, loadBookmarks, loadChannels, loadMyReplies, loadMyThreads, loadPmUsers, loadPosts, searchThreads } from "../discuz/forum";
+import { DEMO, clearReplyPageCache, loadBookmarks, loadChannels, loadMyReplies, loadMyThreads, loadPmUsers, loadPosts, loadReplyPage, searchThreads } from "../discuz/forum";
 import { avatarUrlForUid } from "../discuz/avatarUrl";
 import { mergePage, parseChannels, type Channel, type Post } from "../discuz/parse";
 import { BUILTIN_CHANNELS, mergeChannels } from "../discuz/channels";
@@ -20,7 +22,6 @@ import { LineIcon, type IconName } from "./lineIcons";
 import { hint } from "./Hint";
 import { palette } from "./appearance";
 import { loadLastPlace, saveLastPlace } from "./lastPlace";
-import { ThreadSkeleton } from "./Skeleton";
 import { Placeholder } from "./Placeholder";
 import { notify } from "./toast";
 import { ThreadRow } from "./ThreadRow";
@@ -67,15 +68,11 @@ const MY_REPLIES_KEY = "my-replies";
 const MESSAGES_KEY = "messages";
 const forumKey = (fid: string) => `forum:${fid}:${sortOrder()}`;
 
-/** Persisted view options: sort by thread start or last reply; show or hide pinned threads. */
+/** Persisted view option: sort by thread start or last reply. */
 let DEMO_PREVIEW_OPENED = false;
 const sortOrder = signal<"dateline" | "lastpost">("lastpost");
-const showPinned = signal<boolean>(true);
 Storage.getItem("visual:sort-order").then((v) => {
   if (v === "dateline" || v === "lastpost") sortOrder.set(v);
-}).catch(() => undefined);
-Storage.getItem("visual:show-pinned").then((v) => {
-  if (v === "0" || v === "1") showPinned.set(v === "1");
 }).catch(() => undefined);
 const searchKey = (term: string) => `search:${term}`;
 
@@ -234,6 +231,8 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
     } catch { /* a stale value simply falls back to the forum's own order */ }
   }).catch(() => undefined);
   const sortingMode = signal(false);
+  // The thread a long press asked to hide; the confirm dialog shows while this is set.
+  const pendingHide = signal<Post | null>(null);
   const draggingId = signal<string | null>(null);
   let dragStartY = 0;
   let dragStartIndex = 0;
@@ -329,6 +328,11 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
   // The channel column: a rail of icons when folded or when the window is narrow.
   const railed = () => channelsRailed(windowSize().width, channelsCollapsed());
   const wide = () => windowSize().width >= RAIL_BELOW;
+  // Portrait (height > width): the post-list column collapses to a rail while a thread is open,
+  // mirroring how the board column folds on a narrow window. The detail then owns the width.
+  const isPortrait = () => windowSize().height > windowSize().width;
+  const threadListPopoverOpen = signal(false);
+  const threadListAnchor = signal<ViewRef | null>(null);
 
   // Saves the channel and thread now open (favorites save no channel).
   function savePlace() {
@@ -387,6 +391,11 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
         if (n === 1 && list.length > 0 && key === searchKey(searchTerm() ?? "")) {
           animateSearchChange();
           searchOpen.set(false);
+        }
+        // Warm the cache: the first many threads' reply pages are fetched now, so opening one
+        // from the list shows its posts at once instead of after a round-trip.
+        if (n === 1 && !DEMO) {
+          for (const p of list.slice(0, 8)) if (p.id) void loadReplyPage(p.id, 1);
         }
       })
       .catch((e) => {
@@ -739,8 +748,15 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
     searchTerm() === null && !favorites() && !mine() && !replies() && !messages() && !history() && !channel();
 
   // The rows the threads column lists: the history's sections, or the threads as they are.
-  const listRows = (): ListRow[] =>
-    history() ? historyRows() : posts().filter((p) => showPinned() || !p.pinned).map((post): ListRow => ({ kind: "post", post }));
+  // `computed` keeps the array stable until the posts (or the hidden set or the history) change,
+  // so an unrelated re-render does not hand the list a new array and re-render every row.
+  // Threads the user hid ("隐藏该贴") are left out.
+  const listRows = computed(
+    (): ListRow[] =>
+      history()
+        ? historyRows().filter((r) => (r.kind !== "post" ? true : !isHidden(r.post.id)))
+        : posts().filter((p) => !isHidden(p.id)).map((post): ListRow => ({ kind: "post", post })),
+  );
 
   // True while the channel list is being fetched: the refresh icon dims and ignores presses.
   const channelsLoading = signal(false);
@@ -948,6 +964,72 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
   // The thread the column shows: the last thread opened from a link, else the list's thread.
   const shownThread = () => (detour().length > 0 ? detour()[detour().length - 1] : thread());
 
+  // The post-list column folds to a rail in portrait while a detail is open, for every list
+  // (a channel's threads, favorites, my threads/replies, messages, history) so the detail owns
+  // the width; a tap on the rail pops the list back as an overlay.
+  const threadRailed = () => isPortrait() && (shownThread() !== null || peer() !== null);
+
+  // The collapsed post-list rail (portrait + thread open): a tap opens the list as a popover.
+  function CollapsedThreadRail(): JSX.Element {
+    return (
+      <View
+        ref={(n: ViewRef | null) => threadListAnchor.set(n)}
+        onPress={() => threadListPopoverOpen.set(true)}
+        accessibilityLabel="帖子列表"
+        style={{ flex: 1, alignItems: "center", gap: 6, paddingTop: 12 }}
+      >
+        <View style={{ width: 40, height: 40, alignItems: "center", justifyContent: "center", borderRadius: 8, backgroundColor: palette().surface }}>
+          <LineIcon name="list" size={18} />
+        </View>
+        <Text style={{ fontSize: 10, color: palette().muted }}>帖子</Text>
+      </View>
+    );
+  }
+
+  // The list shown inside the portrait popover (and reused without the rail chrome).
+  function ThreadListPopoverContent(): JSX.Element {
+    return (
+      <View style={{ flex: 1, alignSelf: "stretch" }}>
+        <View style={{ padding: 10, flexDirection: "row", alignItems: "center", gap: 6, borderBottomWidth: 1, borderColor: palette().border }}>
+          <Text style={{ fontSize: 14, fontWeight: 600, color: palette().text, flex: 1 }}>{headerTitle()}</Text>
+        </View>
+        {listLoading() ? (
+          <View style={{ padding: 16, alignItems: "center" }}><LoadingBar /></View>
+        ) : nothingPicked() ? (
+          <Placeholder title="选择一个版块以查看帖子。" />
+        ) : (
+          <List
+            style={{ flex: 1 }}
+            contentStyle={{ padding: 6, gap: 3 }}
+            each={listRows()}
+            estimatedItemSize={64}
+            onLoadMore={loadMore}
+            refreshing={refreshing()}
+            onRefresh={() => refreshThreads()}
+            footer={() => <View>{loadingMoreShown() ? <LoadingBar /> : null}</View>}
+          >
+            {(row) => (
+              row().kind === "header" ? (
+                <Text style={{ fontSize: 11, color: palette().muted, paddingTop: 10, paddingBottom: 2, paddingHorizontal: 8 }}>{titleOf(row())}</Text>
+              ) : (
+                <ThreadRow
+                  item={() => postOf(row())}
+                  selected={() => (messages() ? peer() : thread())?.id === postOf(row()).id}
+                  avatar={() => avatarUrlForUid(postOf(row()).uid)}
+                  sortByDate={() => !!channel() && sortOrder() === "dateline"}
+                  favorite={() => !favorites() && !!props.user() && isFavorite(postOf(row()).id)}
+                  viewed={() => isViewed(postOf(row()).id)}
+                  onPress={() => { openThread(postOf(row())); threadListPopoverOpen.set(false); }}
+                  onLongPress={() => pendingHide.set(postOf(row()))}
+                />
+              )
+            )}
+          </List>
+        )}
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1, alignSelf: "stretch" }}>
       {titleBarShown() ? <TitleBar wide={wide} search={searchProps} /> : null}
@@ -1066,8 +1148,13 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
         {props.footer ? props.footer(railed()) : null}
       </View>
 
-      {/* Column 2: threads of the channel, or favorites */}
-      <View style={{ width: 288, borderRightWidth: 1, borderColor: palette().border }}>
+      {/* Column 2: threads of the channel, or favorites. In portrait while a thread is open it
+          collapses to a rail (like the board column); a tap opens the list as a popover. */}
+      <View style={{ width: threadRailed() ? RAIL_WIDTH : 288, borderRightWidth: 1, borderColor: palette().border }}>
+        {threadRailed() ? (
+          <CollapsedThreadRail />
+        ) : (
+        <>
         <View style={{ padding: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
           {searchOpen() && !titleBarShown() ? null : (
             <Text style={{ fontSize: 15, color: palette().text, flex: 1 }}>{headerTitle()}</Text>
@@ -1110,15 +1197,11 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
                 <Text style={{ fontSize: 11, color: palette().text }}>回帖时间</Text>
               </View>
               <View style={{ flex: 1 }} />
-              <View onPress={() => { const n = !showPinned(); showPinned.set(n); Storage.setItem("visual:show-pinned", n ? "1" : "0").catch(() => undefined); }}
-                accessibilityLabel="切换置顶帖显示"
-                style={{ height: 26, justifyContent: "center", alignItems: "center", paddingHorizontal: 8, borderRadius: 5, borderWidth: 1, borderColor: palette().border }}>
-                <Text style={{ fontSize: 11, color: palette().muted }}>{showPinned() ? "隐藏置顶" : "显示置顶"}</Text>
-              </View>
+              <Text style={{ fontSize: 10, color: palette().muted }}>长按帖子可隐藏</Text>
             </>
           ) : (
             <Text style={{ fontSize: 11, color: palette().muted, flex: 1 }}>
-              {sortOrder() === "dateline" ? "按发帖时间" : "按回帖时间"}{showPinned() ? "" : " · 已隐藏置顶"}
+              {sortOrder() === "dateline" ? "按发帖时间" : "按回帖时间"}
             </Text>
           )}
         </View>
@@ -1129,9 +1212,9 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
           <Text style={{ fontSize: 13, color: palette().muted, textAlign: "center", padding: 16 }}>你打开过的帖子会显示在这里。</Text>
         ) : null}
         {listLoading() ? (
-          <Scroll style={{ flex: 1 }}>
-            <ThreadSkeleton />
-          </Scroll>
+          <View style={{ flex: 1, alignItems: "center", paddingTop: 28 }}>
+            <LoadingBar />
+          </View>
         ) : nothingPicked() ? (
           <Placeholder
             title="选择一个版块以查看帖子。"
@@ -1146,6 +1229,8 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
           each={listRows()}
           estimatedItemSize={64}
           onLoadMore={loadMore}
+          refreshing={refreshing()}
+          onRefresh={() => refreshThreads()}
           footer={() => (
             <View>
               {loadingMoreShown() ? <LoadingBar /> : null}
@@ -1164,15 +1249,18 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
                 item={() => postOf(row())}
                 selected={() => (messages() ? peer() : thread())?.id === postOf(row()).id}
                 avatar={() => avatarUrlForUid(postOf(row()).uid)}
+                sortByDate={() => !!channel() && sortOrder() === "dateline"}
                 // The favorites list is all favorites, so its rows carry no star.
                 favorite={() => !favorites() && !!props.user() && isFavorite(postOf(row()).id)}
                 viewed={() => isViewed(postOf(row()).id)}
                 onPress={() => openThread(postOf(row()))}
+                onLongPress={() => pendingHide.set(postOf(row()))}
               />
             )
           )}
         </List>
         )}
+        </>)}
       </View>
 
       {/* Column 3: the open thread. Under the title bar it extends up into the bar (a negative top margin),
@@ -1181,7 +1269,7 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
         {composing() && canCompose() ? (
           <NewThread fid={channel()!.id} channel={channel()!.title} onPosted={threadPosted} onClose={() => composing.set(false)} />
         ) : messages() && peer() && detour().length === 0 ? (
-          <Conversation peer={() => peer()!} onOpenThread={openLinkedThread} />
+          <Conversation peer={() => peer()!} onOpenThread={openLinkedThread} onSwipeBack={() => peer.set(null)} />
         ) : shownThread() ? (
           <Thread
             // A thread from a link has no forum of its own here: its first page names it.
@@ -1191,7 +1279,10 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
             onSignInNeeded={props.onSignInNeeded}
             focusPid={detour().length > 0 ? detour()[detour().length - 1].focus : undefined}
             onOpenThread={openLinkedThread}
-            onBack={detour().length > 0 ? backFromLink : undefined}
+            onBack={detour().length > 0 ? backFromLink : (isPortrait() && shownThread() ? () => thread.set(null) : undefined)}
+            // A right swipe in the thread body goes back too (in portrait it returns to the list;
+            // a thread opened from a link returns to the one before it).
+            onSwipeBack={detour().length > 0 ? backFromLink : () => thread.set(null)}
             shortcutsOpen={() => shortcutsOpen()}
             onUnfavorited={() => {
               // In the favorites list, the removed thread leaves the list.
@@ -1206,6 +1297,61 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
       </View>
       </View>
       {shortcutsOpen() ? <ShortcutsHelp keys={shortcutRows()} onClose={() => shortcutsOpen.set(false)} /> : null}
+      {threadListPopoverOpen() && threadListAnchor() ? (
+        <Overlay
+          anchor={threadListAnchor()!}
+          placement="right"
+          align="start"
+          offset={4}
+          onPressOutside={() => threadListPopoverOpen.set(false)}
+        >
+          <View
+            style={{
+              width: 360,
+              // Reach nearly the full portrait height so the overlay lists many more topics than before.
+              height: Math.max(360, windowSize().height - 16),
+              backgroundColor: palette().surface,
+              borderWidth: 1,
+              borderColor: palette().border,
+              borderRadius: 10,
+              overflow: "hidden",
+            }}
+          >
+            <ThreadListPopoverContent />
+          </View>
+        </Overlay>
+      ) : null}
+      {pendingHide() ? (
+        // The same centered card style as the thread's delete dialog.
+        <Dialog
+          animation="fade"
+          onCancel={() => pendingHide.set(null)}
+          style={{ position: "absolute", left: 0, top: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" }}
+          backdropStyle={{ position: "absolute", left: 0, top: 0, right: 0, bottom: 0, backgroundColor: "rgba(0, 0, 0, 0.3)" }}
+        >
+          <View style={{ width: 320, padding: 20, gap: 12, borderRadius: 12, backgroundColor: palette().bg }}>
+            <Text style={{ fontSize: 15, fontWeight: 600, color: palette().text }}>隐藏该贴？</Text>
+            <Text style={{ fontSize: 13, color: palette().muted, numberOfLines: 2 }}>{pendingHide()!.title}</Text>
+            <Text style={{ fontSize: 12, color: palette().muted }}>隐藏后不再显示在此帖子列表中。</Text>
+            <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+              <View
+                onPress={() => pendingHide.set(null)}
+                accessibilityLabel="取消"
+                style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 6, borderWidth: 1, borderColor: palette().border }}
+              >
+                <Text style={{ fontSize: 13, color: palette().text }}>取消</Text>
+              </View>
+              <View
+                onPress={() => { const p = pendingHide(); if (p) hideThread(p.id); pendingHide.set(null); }}
+                accessibilityLabel="隐藏该贴"
+                style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 6, backgroundColor: palette().danger }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: 600, color: "#ffffff" }}>隐藏该贴</Text>
+              </View>
+            </View>
+          </View>
+        </Dialog>
+      ) : null}
     </View>
   );
 }

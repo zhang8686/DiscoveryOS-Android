@@ -473,11 +473,15 @@ function App() {
     </View>
   );
 
-  // The whole main interface is one selectable view, so every text in it can be selected,
-  // including text inside rows and buttons that take presses.
+  // The whole interface used to be one `selectable` view so every text could be copied.
+  // On Android that makes NSH wrap the entire window in a `SelectableView` selection layer
+  // (it captures ACTION_DOWN to start a long-press text-selection gesture). That layer sits
+  // above every child and swallows the single-tap (onPress) dispatch, so buttons and thread
+  // rows stop responding and taps feel "off" (only the control's non-text area still fires).
+  // Selection is therefore scoped off the root; if copy is wanted later, mark the specific
+  // read-only text blocks `selectable` instead of the whole window.
   return (
     <View
-      selectable={true}
       style={{
         flex: 1,
         paddingTop: "env(safe-area-inset-top)",
