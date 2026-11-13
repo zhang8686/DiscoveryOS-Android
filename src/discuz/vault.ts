@@ -7,7 +7,9 @@ export type Credentials = { name: string; pass: string };
 export type Vault = { creds: Credentials | null; cookies: Record<string, string> };
 
 let cache: Vault | null = null;
-let started = false;
+let initPromise: Promise<void> | null = null;
+// Writes are chained so a slow write can never be overtaken by a newer one.
+let writeChain: Promise<void> = Promise.resolve();
 
 export function parseVault(raw: string | null): Vault {
   if (!raw) return { creds: null, cookies: {} };
@@ -21,22 +23,34 @@ export function parseVault(raw: string | null): Vault {
   } catch { return { creds: null, cookies: {} }; }
 }
 
-/** Awaits the persisted cookies once; call before restoring the session. */
-export async function initVault(): Promise<void> {
-  if (started) return;
-  started = true;
-  try {
-    const raw = await Storage.getItem(KEY);
-    cache = parseVault(raw ?? null);
-  } catch { cache = { creds: null, cookies: {} }; }
+/** True once the on-device cookies have been read into memory. */
+export function vaultReady(): boolean { return cache !== null; }
+
+/** Reads the persisted cookies exactly once; concurrent callers share the promise. */
+export function initVault(): Promise<void> {
+  if (!initPromise) {
+    initPromise = (async () => {
+      try {
+        const raw = await Storage.getItem(KEY);
+        cache = parseVault(raw ?? null);
+      } catch { cache = { creds: null, cookies: {} }; }
+    })();
+  }
+  return initPromise;
 }
 
 export function loadVault(): Vault {
-  if (!cache) cache = { creds: null, cookies: {} };
-  return cache;
+  return cache ?? { creds: null, cookies: {} };
 }
 
-export function saveVault(next: Vault): void {
-  cache = { creds: null, cookies: next.cookies };
-  Storage.setItem(KEY, JSON.stringify(cache)).catch(() => undefined);
+/** Queues a durable write and returns a promise resolving once it is on disk. */
+export function saveVault(next: Vault): Promise<void> {
+  const snapshot: Vault = { creds: null, cookies: { ...next.cookies } };
+  cache = snapshot;
+  const text = JSON.stringify(snapshot);
+  writeChain = writeChain.then(() => Storage.setItem(KEY, text)).catch(() => undefined);
+  return writeChain;
 }
+
+/** Waits for every queued write: called after sign-in so a background kill cannot lose the session. */
+export function flushVault(): Promise<void> { return writeChain; }

@@ -6,9 +6,9 @@ test("a missing or damaged item reads as empty", () => {
   expect(parseVault("not json")).toEqual({ creds: null, cookies: {} });
 });
 
-test("the login and the cookies come back from one item", () => {
+test("cookies come back, a password is never kept on Android", () => {
   const v = parseVault(JSON.stringify({ creds: { name: "u", pass: "a:b" }, cookies: { abc_auth: "x" } }));
-  expect(v.creds).toEqual({ name: "u", pass: "a:b" });
+  expect(v.creds).toBe(null);
   expect(v.cookies).toEqual({ abc_auth: "x" });
 });
 

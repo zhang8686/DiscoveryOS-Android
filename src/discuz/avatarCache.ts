@@ -12,10 +12,15 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 const MISSING_TTL_MS = 60 * 60 * 1000;
 
 type Entry = { avatar: string; at: number };
-type PictureEntry = { data?: string; missing?: boolean; at: number };
 
 const userKey = (name: string) => `avatar:${name}`;
-const pictureKey = (url: string) => `avatar-image:${url}`;
+// Avatars are kept in memory only. Writing their base64 into Storage filled the
+// 5 MB quota and made later writes (notably the session cookie) fail silently.
+const pictureMemory = new Map<string, string>();
+const missingMemory = new Map<string, number>();
+// A 24 dp thumbnail never needs a multi-megabyte source: skip large images
+// rather than decoding them into a huge base64 string on the UI thread.
+const MAX_AVATAR_BYTES = 96 * 1024;
 
 // The requests under way, by key: callers that ask for the same name or picture share one.
 const inFlight = new Map<string, Promise<unknown>>();
@@ -42,25 +47,29 @@ export function userAvatar(name: string): Promise<string | undefined> {
   });
 }
 
-/** The picture at `url` as a `data:` URL, from the cache while it is fresh. Rejects when the server has no picture there. */
+/** The picture at `url` as a `data:` URL. Cached in memory for this run only. */
 export function avatarPicture(url: string): Promise<string> {
+  const hit = pictureMemory.get(url);
+  if (hit) return Promise.resolve(hit);
+  const missed = missingMemory.get(url);
+  if (missed && Date.now() - missed < MISSING_TTL_MS) return Promise.reject(new Error(`No picture at ${url}`));
   return shared(`picture:${url}`, async () => {
-    const cached = await readEntry<PictureEntry>(pictureKey(url));
-    if (cached?.data && fresh(cached, TTL_MS)) return cached.data;
-    if (cached?.missing && fresh(cached, MISSING_TTL_MS)) throw new Error(`No picture at ${url}`);
     const { response, bytes } = await fetchLogged(url);
     if (!response.ok) {
-      // A refused picture (404 and the like) is remembered, so the next list does not ask again at once.
-      await Storage.setItem(pictureKey(url), JSON.stringify({ missing: true, at: Date.now() } satisfies PictureEntry)).catch(() => undefined);
+      missingMemory.set(url, Date.now());
       throw new Error(`HTTP ${response.status} for ${url}`);
+    }
+    if (bytes.length > MAX_AVATAR_BYTES) {
+      missingMemory.set(url, Date.now());
+      throw new Error(`Avatar too large at ${url}`);
     }
     const type = response.headers.get("content-type") ?? "image/jpeg";
     let binary = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    for (let i = 0; i < bytes.length; i += 0x2000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x2000));
     }
     const data = `data:${type};base64,${btoa(binary)}`;
-    await Storage.setItem(pictureKey(url), JSON.stringify({ data, at: Date.now() } satisfies PictureEntry)).catch(() => undefined);
+    pictureMemory.set(url, data);
     return data;
   });
 }

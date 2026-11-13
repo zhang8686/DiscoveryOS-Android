@@ -2,7 +2,7 @@
 // channels | a channel's threads (or favorites) | the open thread.
 // Components run once, so the views switch inside JSX, not by early return.
 import { BackHandler } from "nsh/mobile";
-import { cleanup, createAnimatedValue, createMotion, effect, Overlay, type ViewRef, LayoutAnimation, List, reduceMotion, Scroll, signal, Storage, Text, untracked, View, windowSize, type JSX } from "nsh";
+import { cleanup, effect, Overlay, type ViewRef, List, Scroll, signal, Storage, Text, untracked, View, windowSize, type JSX } from "nsh";
 import { onEscape } from "./escape";
 import { ShortcutsHelp } from "./ShortcutsHelp";
 import { shortcutRows, useCommand } from "./commands";
@@ -85,8 +85,8 @@ function ChannelRow(props: {
   channel: Channel;
   selected: () => boolean;
   railed: () => boolean;
-  onPress: () => void;
   delay: number;
+  onPress: () => void;
   sorting: () => boolean;
   dragging: () => boolean;
   onLongPress: () => void;
@@ -95,13 +95,9 @@ function ChannelRow(props: {
   onDragEnd: () => void;
   onNudge: (delta: number) => void;
 }) {
-  const hover = createAnimatedValue(0);
-  const picked = createAnimatedValue(0);
-  const iconScale = hover.interpolate({ inputRange: [0, 1], outputRange: [1, 1.25] });
-  const entrance = createMotion({ initial: { opacity: 0, translateY: -10 }, enter: "fadeInUp", duration: 220, delay: props.delay });
-  effect(() => {
-    picked.timing(props.selected() ? 1 : 0, { duration: 180 }).catch(() => undefined);
-  });
+  // Touch devices have no hover and no entrance transition: 19 channel rows
+  // each owning two animated values, a motion and an effect made the sidebar
+  // visibly janky. Selection and dragging are plain static styles now.
   const c = props.channel;
   const pillWidth = Math.min(30, Math.ceil(compactCount(c.newPosts).length * 6.5) + 6);
   const sorting = props.sorting;
@@ -109,8 +105,6 @@ function ChannelRow(props: {
     <View
       onPress={sorting() ? undefined : props.onPress}
       onLongPress={props.onLongPress}
-      // In arrange mode a finger starting to move takes the gesture away from the
-      // scroll view, so the row follows the finger instead of the list scrolling.
       onStartShouldSetResponder={sorting() ? () => false : undefined}
       onMoveShouldSetResponder={sorting() ? (_e: any, g: any) => { props.onDragStart(g.y0); return true; } : undefined}
       onResponderGrant={sorting() ? () => true : undefined}
@@ -119,31 +113,16 @@ function ChannelRow(props: {
       onResponderTerminate={sorting() ? () => props.onDragEnd() : undefined}
       accessibilityLabel={c.title}
       style={{
-        ...entrance.style, minHeight: 36, justifyContent: "center",
+        minHeight: 36, justifyContent: "center",
         paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6,
         alignItems: props.railed() ? "center" : undefined,
-        backgroundColor: props.dragging() ? palette().selected : "transparent",
+        backgroundColor: props.dragging() || props.selected() ? palette().selected : "transparent",
         opacity: props.dragging() ? 0.85 : 1,
       }}
     >
-      <View
-        style={{
-          position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
-          borderRadius: 6, backgroundColor: palette().border,
-          opacity: hover.interpolate({ inputRange: [0, 1], outputRange: [0, 0.5] }),
-        }}
-      />
-      <View
-        style={{
-          position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
-          borderRadius: 6, backgroundColor: palette().selected, opacity: picked,
-        }}
-      />
       {props.railed() ? (
         <View>
-          <View style={{ transform: [{ scale: iconScale }] }}>
-            <LineIcon name={channelIcon(c.title)} size={17} />
-          </View>
+          <View><LineIcon name={channelIcon(c.title)} size={17} /></View>
           {sorting() ? <LineIcon name="grip" size={12} /> : null}
           {c.newPosts > 0 ? (
             <View style={{ position: "absolute", top: -2, left: 16, width: pillWidth, height: 14,
@@ -157,7 +136,7 @@ function ChannelRow(props: {
       ) : (
         <View style={{ flexDirection: "row", alignItems: "center", gap: sorting() ? 4 : 6 }}>
           {sorting() ? <LineIcon name="grip" size={12} /> : null}
-          <View style={{ width: sorting() ? 18 : 20, alignItems: "center", transform: [{ scale: iconScale }] }}>
+          <View style={{ width: sorting() ? 18 : 20, alignItems: "center" }}>
             <LineIcon name={channelIcon(c.title)} size={17} />
           </View>
           <Text style={{ fontSize: 12.5, color: palette().text, flex: 1, numberOfLines: 1 }}>{c.title}</Text>
@@ -318,13 +297,8 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
 
   // Opening or closing More, and pinning a channel, animate the list's change.
   function animateListChange() {
-    const curve = { type: "easeInEaseOut" as const };
-    LayoutAnimation.configureNext({
-      duration: 200,
-      update: curve,
-      create: { ...curve, property: "opacity" },
-      delete: { ...curve, property: "opacity" },
-    });
+    // Touch targets should react at once: a 200 ms layout animation over the
+    // whole channel column drops frames on tablets.
   }
   // The Android back key: close the most recent overlay first, then step out
   // of the open thread, and only then let the system exit the app.
@@ -358,27 +332,6 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
   const railed = () => channelsRailed(windowSize().width, channelsCollapsed());
   const wide = () => windowSize().width >= RAIL_BELOW;
 
-  // The channel column glides between its full width and the rail when the arrangement
-  // changes: the user folds it, or the window crosses the breakpoint. A window dragged
-  // within one arrangement follows the pointer at once, so it does not animate.
-  let lastRailed: boolean | null = null;
-  effect(() => {
-    const now = railed();
-    untracked(() => {
-      if (lastRailed !== null && now !== lastRailed && !reduceMotion()) {
-        // 240 ms, the duration Spotish uses for a layout change (`DURATION.base`).
-        const curve = { type: "easeInEaseOut" as const };
-        LayoutAnimation.configureNext({
-          duration: 240,
-          update: curve,
-          create: { ...curve, property: "opacity" },
-          delete: { ...curve, property: "opacity" },
-        });
-      }
-      lastRailed = now;
-    });
-  });
-
   // Saves the channel and thread now open (favorites save no channel).
   function savePlace() {
     saveLastPlace({ channel: favorites() || mine() || replies() || messages() || history() ? null : channel(), thread: thread() });
@@ -400,18 +353,50 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
     });
   }
 
-  function loadAvatars(list: Post[]) {
-    for (const p of list) {
-      const name = avatarName(p);
-      if (!name || asked.has(name)) continue;
-      asked.add(name);
+  // Avatars are decoration, not content. A 50-thread page used to fire two
+  // requests per distinct author and call `avatars.set` once per image, each
+  // set rebuilding the virtualized list. Cap concurrency and batch the results.
+  const AVATARS_PER_PAGE = 8;
+  const AVATAR_CONCURRENCY = 2;
+  const avatarQueue: string[] = [];
+  let avatarRunning = 0;
+  let avatarBatch: Record<string, string> = {};
+  let avatarFlush: ReturnType<typeof setTimeout> | null = null;
+
+  function flushAvatars(): void {
+    avatarFlush = null;
+    if (Object.keys(avatarBatch).length === 0) return;
+    avatars.set({ ...avatars(), ...avatarBatch });
+    avatarBatch = {};
+  }
+
+  function pumpAvatars(): void {
+    while (avatarRunning < AVATAR_CONCURRENCY && avatarQueue.length > 0) {
+      const name = avatarQueue.shift()!;
+      avatarRunning++;
       userAvatar(name)
         .then((url) => (url ? avatarPicture(url) : undefined))
         .then((picture) => {
-          if (picture) avatars.set({ ...avatars(), [name]: picture });
+          if (!picture) return;
+          avatarBatch[name] = picture;
+          if (!avatarFlush) avatarFlush = setTimeout(flushAvatars, 150);
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => { avatarRunning--; pumpAvatars(); });
     }
+  }
+
+  function loadAvatars(list: Post[]) {
+    let added = 0;
+    for (const p of list) {
+      if (added >= AVATARS_PER_PAGE) break;
+      const name = avatarName(p);
+      if (!name || asked.has(name)) continue;
+      asked.add(name);
+      avatarQueue.push(name);
+      added++;
+    }
+    pumpAvatars();
   }
 
   let loadingMore = false;

@@ -60,8 +60,17 @@ export function recordView(post: Post, now: number = Date.now()): void {
 
 /** Whether a thread has been opened before. Tracked: the thread list greys
  * a row as soon as `recordView` adds it to the history. */
+// A virtualized list asks once per visible row on every render. Build the id
+// set once per history change instead of scanning 200 entries per row.
+let viewedSource: HistoryEntry[] | null = null;
+let viewedIds = new Set<string>();
 export function isViewed(id: string): boolean {
-  return historyEntries().some((e) => e.post.id === id);
+  const entries = historyEntries();
+  if (viewedSource !== entries) {
+    viewedSource = entries;
+    viewedIds = new Set(entries.map((e) => e.post.id));
+  }
+  return viewedIds.has(id);
 }
 
 /** Empties the history. */

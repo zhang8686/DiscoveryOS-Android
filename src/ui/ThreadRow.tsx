@@ -1,7 +1,7 @@
 // One thread in a channel's list. A `List` recycles its rows for other threads as the user
 // scrolls, so a row reads its thread through `item()` rather than holding it, and keeps no
 // state of its own beyond its hover animation, which a hover-out always settles.
-import { createAnimatedValue, Image, Text, View } from "nsh";
+import { Image, Text, View } from "nsh";
 import type { Post } from "../discuz/parse";
 import { timeAgo } from "../discuz/timeAgo";
 import { palette } from "./appearance";
@@ -21,9 +21,6 @@ export function ThreadRow(props: {
   viewed: () => boolean;
   onPress: () => void;
 }) {
-  // The avatar swells as the row is hovered, as the Dock's icons do.
-  const hover = createAnimatedValue(0);
-  const avatarScale = hover.interpolate({ inputRange: [0, 1], outputRange: [1, 1.2] });
   return (
     <View
       onPress={props.onPress}
@@ -40,9 +37,7 @@ export function ThreadRow(props: {
       }}
     >
       {props.avatar() ? (
-        <View style={{ transform: [{ scale: avatarScale }] }}>
-          <Image src={props.avatar()!} style={{ width: 24, height: 24, borderRadius: 5 }} />
-        </View>
+        <Image src={props.avatar()!} style={{ width: 24, height: 24, borderRadius: 5 }} />
       ) : null}
       <View style={{ flex: 1, gap: 2 }}>
         {/* A favorite's star is a span of the title's own text, so it sits on the first line and wraps with it. */}

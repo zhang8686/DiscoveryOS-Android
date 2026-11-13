@@ -35,7 +35,7 @@ export async function downloadAttachment(url: string, name: string): Promise<voi
     notify(TOAST, `Saved ${path.split("/").pop()} to Downloads.`);
   } catch (e) {
     const reason = e instanceof AttachmentError ? `: ${e.message}` : "";
-    notify(TOAST, `Couldn't download ${name}${reason}.`);
+    notify(TOAST, `无法下载 ${name}${reason}。`);
   } finally {
     inFlight.delete(url);
   }

@@ -2,6 +2,7 @@
 // page size, and the re-login when a page asks for it. Pages are GB18030.
 import { formEncodeGb, fetchGbRequest, htmlEntities, postFormGb, postGbNoRedirect } from "./encoding";
 import { absorbSetCookie, clearCookies, cookieHeader } from "./cookies";
+import { flushVault } from "./vault";
 import { htmlDecode } from "./parse";
 
 export const HOST = "https://www.4d4y.com/forum/";
@@ -9,7 +10,9 @@ export const HOST = "https://www.4d4y.com/forum/";
 // `DiscuzAPI.loginRequired`: a page that shows the login form.
 const LOGIN_REQUIRED = '<select name="loginfield" id="loginfield">';
 // The logout link, which carries the form hash, is only there when signed in.
-const LOGOUT_LINK = /<a href="logging\.php\?action=logout&amp;formhash=([^"]+)">退出<\/a>/;
+// Match the href only: the surrounding label is Chinese in the live forum but
+// can be localised, and asking for exact text made the check brittle.
+const LOGOUT_LINK = /href="logging\.php\?action=logout&amp;formhash=([^"]+)"/;
 // The hidden `formhash` input every form on a logged-in page carries (`<input type="hidden" name="formhash" value="…" />`).
 const HIDDEN_FORMHASH = /<input[^>]*\bname="formhash"[^>]*\bvalue="([^"]+)"/;
 // Discuz's confirmation, and the box it shows when it refuses a post.
@@ -18,10 +21,15 @@ const POSTBOX = /<div class="postbox">([\s\S]*?)<\/div>/;
 // The AJAX refusal: `messagehandle_fastpost('<code>', '<message>')`; the message is the second argument.
 const AJAX_REFUSAL = /messagehandle_fastpost\('[^']*', '([^']*)'\)/;
 const PAGE_SIZE = /name="pppnew" value="(\d+)" checked="checked"/;
+// The header's own profile link shows the signed-in member's name.
+const MEMBER_LINK = /<a href="space\.php\?uid=\d+"[^>]*>([^<]+)<\/a>/;
 
 export type Session = { name: string; pass: string };
 
 let session: Session | null = null;
+// The signed-in member's name. Unlike `session`, this survives a restart:
+// Android keeps only cookies, so there is no password to rebuild `session` from.
+let signedInName: string | null = null;
 let formHash: string | null = null;
 export let pageSize = 50;
 
@@ -125,6 +133,7 @@ export async function login(name: string, pass: string): Promise<boolean> {
     return false;
   }
   session = { name, pass };
+  signedInName = name;
   formHash = hash;
   // The login reply still carries the guest form hash. Writes need the member's
   // own hash, which only appears on a page served after the auth cookie is set.
@@ -134,6 +143,8 @@ export async function login(name: string, pass: string): Promise<boolean> {
     if (memberHash) formHash = memberHash;
   } catch { /* keep the login hash */ }
   await loadConfig();
+  // The auth cookie must be durable before the app can be backgrounded.
+  await flushVault();
   return true;
 }
 
@@ -145,8 +156,10 @@ export async function logout(): Promise<void> {
     }
   } finally {
     session = null;
+    signedInName = null;
     formHash = null;
     clearCookies();
+    await flushVault();
   }
 }
 
@@ -158,15 +171,23 @@ export async function logout(): Promise<void> {
  */
 export async function restoreSession(saved: { name: string; pass: string } | null): Promise<"signed-in" | "signed-out" | "offline"> {
   try {
-    const html = await request("GET", "index.php", { retry: false });
+    // `my.php` is served to guests and members alike (unlike `index.php`, which
+    // Cloudflare challenges when no session cookie is present), and its header
+    // carries both the member's name and a fresh form hash.
+    const html = await request("GET", "my.php", { query: [["item", "threads"]], retry: false });
     const hash = parseFormHash(html);
+    const member = MEMBER_LINK.exec(html)?.[1];
     if (hash) {
       formHash = hash;
-      session = saved;
+      signedInName = member ? htmlDecode(member).trim() : (saved?.name ?? null);
+      // No password is stored on Android, so `session` stays null: the request
+      // layer must not try to re-login with a blank password.
+      session = null;
       return "signed-in";
     }
+    signedInName = null;
   } catch (e) {
-    // A server refusal (`HTTP …` from `fetchGbRequest`) is not a network failure: report it, so the
+    // A server refusal (`HTTP …`) is not a network failure: report it, so the
     // user sees why the login did not restore instead of a misleading "offline".
     if (e instanceof Error && e.message.startsWith("HTTP ")) throw e;
     return "offline";
@@ -531,7 +552,7 @@ export async function postThread(fid: string, subject: string, content: string):
 }
 
 export function currentUser(): string | null {
-  return session?.name ?? null;
+  return signedInName ?? session?.name ?? null;
 }
 
 /** The form hash a POST needs (`DiscuzAPI.sharedFormHash`). */

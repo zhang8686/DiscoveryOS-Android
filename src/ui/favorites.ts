@@ -51,8 +51,17 @@ function save(list: Favorite[]) {
   Storage.setItem(KEY, JSON.stringify(list)).catch(() => undefined);
 }
 
-/** Whether the thread is in the favorites (tracked). */
-export const isFavorite = (tid: string) => favorites().some((f) => f.id === tid);
+/** Whether the thread is in the favorites (tracked, O(1) per row). */
+let favoriteSource: Favorite[] | null = null;
+let favoriteIds = new Set<string>();
+export const isFavorite = (tid: string): boolean => {
+  const list = favorites();
+  if (favoriteSource !== list) {
+    favoriteSource = list;
+    favoriteIds = new Set(list.map((f) => f.id));
+  }
+  return favoriteIds.has(tid);
+};
 
 /**
  * Brings the saved favorites in line with a loaded favorites list, newest first.

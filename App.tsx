@@ -4,7 +4,7 @@ import { currentUser, login, logout, restoreSession } from "./src/discuz/client"
 import { loadProfile } from "./src/discuz/forum";
 import type { Profile } from "./src/discuz/parse";
 import { clearCredentials, loadCredentials, saveCredentials } from "./src/discuz/credentials";
-import { hasSavedCookies } from "./src/discuz/cookies";
+import { hasSavedCookies, reloadCookies } from "./src/discuz/cookies";
 import { initVault } from "./src/discuz/vault";
 import { Forum } from "./src/ui/Forum";
 import { notify, Toaster } from "./src/ui/toast";
@@ -135,6 +135,8 @@ function MenuAction(props: { label: string; onPress: () => void }) {
 }
 
 function App() {
+  // Nothing touches the network until the saved cookies are back in memory.
+  const ready = signal(false);
   const user = signal<string | null>(currentUser());
   const name = signal("");
   const pass = signal("");
@@ -191,7 +193,7 @@ function App() {
         notify("sign-in", "登录失败。");
       }
     } catch (e) {
-      notify("sign-in", `Sign-in failed: ${e}`);
+      notify("sign-in", `登录失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       busy.set(false);
     }
@@ -234,7 +236,7 @@ function App() {
           if (saved) clearCredentials();
         } else if (state === "offline") notify("restore", "当前离线，已保留已保存的登录信息。");
       })
-      .catch((e) => notify("restore", `Could not restore the login: ${e}`))
+      .catch((e) => notify("restore", `恢复登录失败：${e instanceof Error ? e.message : String(e)}`))
       .finally(() => busy.set(false));
   }
 
@@ -243,7 +245,9 @@ function App() {
 
   // 先恢复持久化的会话 Cookie，再尝试免密恢复登录；首屏不弹登录框。
   void initVault().then(() => {
-    if (loadCredentials() || hasSavedCookies()) restoreLogin();
+    reloadCookies();
+    ready.set(true);
+    if (hasSavedCookies()) restoreLogin();
   });
 
   // The account menu, above the avatar: the signed-in user's profile fields, then Sign Out.
@@ -485,7 +489,13 @@ function App() {
       }}
     >
       <View style={{ flex: 1, alignSelf: "stretch" }}>
-        <Forum user={user} footer={(compact) => accountFooter(compact)} onSignInNeeded={() => dialogOpen.set(true)} />
+        {ready() ? (
+          <Forum user={user} footer={(compact) => accountFooter(compact)} onSignInNeeded={() => dialogOpen.set(true)} />
+        ) : (
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ fontSize: 14, color: palette().muted }}>正在恢复登录状态…</Text>
+          </View>
+        )}
       </View>
       {dialogOpen() ? signInDialog : null}
       {confirmOpen() ? signOutDialog : null}
