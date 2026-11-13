@@ -70,23 +70,24 @@
 
 | 项目 | 数值 |
 | --- | --- |
-| 当前版本 | 1.0.2（versionCode 4） |
-| APK 体积 | 约 47 MB（单 arm64-v8a，release 签名） |
+| 当前版本 | 1.0.3（versionCode 5） |
+| APK 体积 | 约 19.4 MB（单 arm64-v8a，release 签名） |
 | 应用自身逻辑包 | 约 232 KB（`assets/nsh/bundle.nshc`） |
 | 应用图标 | 约 13 KB |
-| 主要体积来源 | NSH 预编译运行时 `lib/arm64-v8a/libnsh.so`（约 48.9 MB，未压缩） |
+| 主要体积来源 | NSH 预编译运行时 `lib/arm64-v8a/libnsh.so`（原始 46.6 MB，压缩存储后约 19 MB） |
+| 安装后设备占用 | 约 66 MB（系统在安装时解压原生库；下载包小、设备多占一份） |
 | 运行权限 | 仅 `android.permission.INTERNET` |
 | 系统要求 | minSdk 26 / targetSdk 35，面向 Android 10 及以上平板 |
 | 本地数据 | 浏览历史上限 200 条；版块顺序、排序与筛选开关、会话 Cookie 存于应用私有存储 |
 | 账户信息 | 不落盘明文密码，仅保持 Cookie |
 
-> 47 MB 主要是框架运行时固有体积，应用自身代码与资源不到 300 KB。
+> 应用自身代码与资源不到 300 KB；体积几乎全部来自框架运行时。原生库以压缩方式存储、安装时由系统解压，因此下载体积明显减小，但设备占用相应增加，运行内存不变。
 
 ---
 
 ## 安装
 
-1. 获取 release 签名的 `DiscoveryOS-AndroidPad-V1.0.2.apk`（可直接分发该文件；本仓库为私有，Releases 中的附件需要有仓库访问权限才能下载）。
+1. 获取 release 签名的 `DiscoveryOS-AndroidPad-V1.0.3.apk`（可直接分发该文件；本仓库为私有，Releases 中的附件需要有仓库访问权限才能下载）。
 2. 在 Android 平板上打开该文件；首次安装时系统可能要求为安装来源开启「允许安装未知应用」，授权一次即可。
 3. 应用支持 **arm64-v8a** 设备；32 位平板不在支持范围。
 4. 论坛内容需要登录后查看，请在应用内登录 4d4y 账号。
@@ -97,11 +98,18 @@
 
 ## 源码与构建
 
-本仓库为纯 TSX 工程，使用 NSH 打包：
+本仓库为纯 TSX 工程，使用 NSH 打包；发布包额外做一次原生库压缩以减小下载体积：
 
 ```bash
-nsh package App.tsx --target android --icon icon.png --abi arm64-v8a
+nsh package App.tsx --target android --icon icon.png --abi arm64-v8a \
+  --keystore <release.jks> --key-alias <alias>
+python scripts/slim_apk.py .nsh/out/DiscoveryOS.apk unsigned.apk
+zipalign -f -p 4 unsigned.apk aligned.apk
+apksigner sign --ks <release.jks> --ks-key-alias <alias> \
+  --out DiscoveryOS-AndroidPad-V1.0.3.apk aligned.apk
 ```
+
+`scripts/slim_apk.py` 只做两件事：把清单中的 `android:extractNativeLibs` 设为 `true`，并把 `lib/<abi>/*.so` 改为压缩存储；其余条目逐字节保留，应用代码与资源不受影响。重打包后必须用同一 release keystore 重新签名。
 
 构建环境：NSH 0.5.0、JDK 17、Android SDK 35 / build-tools 35.0.1。发布包使用自己的 release keystore 签名（密钥不随仓库分发）。
 
@@ -114,6 +122,7 @@ nsh package App.tsx --target android --icon icon.png --abi arm64-v8a
 | `src/ui/` | 三栏界面、简笔画图标、帖子行、回复框、播放器组件 |
 | `src/bilibili`、`src/douyin` 等 | 外链媒体的解析与播放 |
 | `screenshots/` | 本文所用界面截图 |
+| `scripts/slim_apk.py` | 发布包原生库压缩与重打包 |
 
 ---
 
