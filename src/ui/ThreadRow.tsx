@@ -5,6 +5,7 @@ import { Image, Text, View } from "nsh";
 import type { Post } from "../discuz/parse";
 import { timeAgo } from "../discuz/timeAgo";
 import { palette } from "./appearance";
+import { PLACEHOLDER_AVATAR } from "../discuz/avatarUrl";
 
 function meta(p: Post): string {
   return [p.author, (p.lastReplyAt ?? p.at) ? timeAgo(p.lastReplyAt ?? p.at!) : undefined].filter(Boolean).join(" · ");
@@ -37,8 +38,10 @@ export function ThreadRow(props: {
       }}
     >
       {props.avatar() ? (
-        <Image src={props.avatar()!} fadeDuration={0} style={{ width: 24, height: 24, borderRadius: 5 }} />
-      ) : null}
+        <Image src={props.avatar()!} placeholder={PLACEHOLDER_AVATAR} fadeDuration={0} style={{ width: 24, height: 24, borderRadius: 5 }} />
+      ) : (
+        <View style={{ width: 24, height: 24, borderRadius: 5, backgroundColor: palette().border }} />
+      )}
       <View style={{ flex: 1, gap: 2 }}>
         {/* A favorite's star is a span of the title's own text, so it sits on the first line and wraps with it. */}
         <Text style={{ fontSize: 12.5, color: props.viewed() ? palette().muted : palette().text, fontWeight: props.viewed() ? 400 : 600 }}>
