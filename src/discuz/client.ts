@@ -95,7 +95,16 @@ export async function findFloor(tid: string, pid: string): Promise<{ html: strin
 
 async function dologin(name: string, pass: string): Promise<string | undefined> {
   const html = await request("POST", "logging.php?action=login&loginsubmit=yes", {
-    form: [["username", name], ["password", pass], ["loginsubmit", "true"]],
+    // Ask for a persistent login (30 days — the web form's "记住登录" cookietime).
+    // Without it Discuz issues a session-only auth cookie; since Android never
+    // stores the password, that cookie lapsing is why a launch the next day asked
+    // for the login again.
+    form: [
+      ["username", name],
+      ["password", pass],
+      ["loginsubmit", "true"],
+      ["cookietime", "2592000"],
+    ],
     retry: false,
   });
   return parseFormHash(html);

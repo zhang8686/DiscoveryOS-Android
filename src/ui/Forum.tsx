@@ -2,7 +2,7 @@
 // channels | a channel's threads (or favorites) | the open thread.
 // Components run once, so the views switch inside JSX, not by early return.
 import { BackHandler } from "nsh/mobile";
-import { cleanup, computed, effect, Overlay, type ViewRef, List, Scroll, signal, Storage, Text, untracked, View, windowSize, type JSX } from "nsh";
+import { cleanup, computed, effect, LayoutAnimation, Overlay, reduceMotion, type ViewRef, List, Scroll, signal, Storage, Text, untracked, View, windowSize, type JSX } from "nsh";
 import { Dialog } from "nsh/base";
 import { hideThread, isHidden } from "./hiddenThreads";
 import { onEscape } from "./escape";
@@ -10,6 +10,8 @@ import { ShortcutsHelp } from "./ShortcutsHelp";
 import { shortcutRows, useCommand } from "./commands";
 import { DEMO, clearReplyPageCache, loadBookmarks, loadChannels, loadMyReplies, loadMyThreads, loadPmUsers, loadPosts, loadReplyPage, searchThreads } from "../discuz/forum";
 import { avatarUrlForUid } from "../discuz/avatarUrl";
+import { userAvatar } from "../discuz/avatarCache";
+import { loadNoticeCounts } from "../discuz/notifications";
 import { mergePage, parseChannels, type Channel, type Post } from "../discuz/parse";
 import { BUILTIN_CHANNELS, mergeChannels } from "../discuz/channels";
 import { Thread } from "./Thread";
@@ -36,6 +38,39 @@ import { animateSearchChange, SearchControl, TitleBar, titleBarShown, type Searc
 // carry no author, so they show the last replier's avatar instead.
 function avatarName(p: Post): string | undefined {
   return p.author ?? p.lastReplyBy;
+}
+
+// Rows that carry only a poster's name (favorites, my threads) cannot build an
+// avatar URL directly — that needs a numeric uid. Resolve it through the user's
+// profile once (cached a day in avatarCache), keep it here so the synchronous row
+// prop can read it, and re-render when it arrives. "" remembers a miss.
+const avatarByName = signal<Record<string, string>>({});
+const avatarPending = new Set<string>();
+const avatarQueue: string[] = [];
+let avatarActive = 0;
+// Cap concurrent profile lookups so a list of many names cannot crowd out the
+// thread/list requests the user is waiting on.
+const AVATAR_CONCURRENCY = 3;
+function resolveAvatarByName(name: string | undefined): void {
+  if (!name || avatarPending.has(name) || avatarByName()[name] !== undefined) return;
+  avatarPending.add(name);
+  avatarQueue.push(name);
+  pumpAvatars();
+}
+function pumpAvatars(): void {
+  while (avatarActive < AVATAR_CONCURRENCY && avatarQueue.length > 0) {
+    const name = avatarQueue.shift()!;
+    avatarActive++;
+    userAvatar(name)
+      .then((url) => { avatarByName.set({ ...avatarByName(), [name]: url ?? "" }); })
+      .catch(() => { avatarByName.set({ ...avatarByName(), [name]: "" }); })
+      .finally(() => { avatarPending.delete(name); avatarActive--; pumpAvatars(); });
+  }
+}
+
+/** A row's avatar URL: by uid when known, else by the poster's name once resolved. */
+function avatarFor(p: Post): string | undefined {
+  return avatarUrlForUid(p.uid) ?? (avatarByName()[avatarName(p) ?? ""] || undefined);
 }
 
 /** A count in short form: 999 stays, 2389 reads as "2.4k". */
@@ -96,7 +131,7 @@ function ChannelRow(props: {
   // each owning two animated values, a motion and an effect made the sidebar
   // visibly janky. Selection and dragging are plain static styles now.
   const c = props.channel;
-  const pillWidth = Math.min(30, Math.ceil(compactCount(c.newPosts).length * 6.5) + 6);
+  const pillWidth = Math.min(22, Math.ceil(compactCount(c.newPosts).length * 5.2) + 4);
   const sorting = props.sorting;
   return (
     <View
@@ -122,9 +157,9 @@ function ChannelRow(props: {
           <View><LineIcon name={channelIcon(c.title)} size={17} /></View>
           {sorting() ? <LineIcon name="grip" size={12} /> : null}
           {c.newPosts > 0 ? (
-            <View style={{ position: "absolute", top: -2, left: 16, width: pillWidth, height: 14,
-                           borderRadius: 7, overflow: "hidden", backgroundColor: palette().surface }}>
-              <Text style={{ numberOfLines: 1, fontSize: 11, color: palette().muted, paddingLeft: 3, lineHeight: 14 }}>
+            <View style={{ position: "absolute", top: -4, left: 6, width: pillWidth, height: 13,
+                           borderRadius: 6.5, overflow: "hidden", backgroundColor: palette().surface }}>
+              <Text style={{ numberOfLines: 1, fontSize: 9, color: palette().muted, paddingLeft: 2, lineHeight: 13 }}>
                 {compactCount(c.newPosts)}
               </Text>
             </View>
@@ -196,9 +231,10 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
   // Channels with no new posts sit under More. More opens as a menu; the channel the user
   // picks from it is pinned into the list until another channel opens.
   const moreOpen = signal(false);
-  // A tablet has room for the whole channel list: show all of them by default,
-  // with one clearly labelled row to fold down to "new posts only".
-  const showAllChannels = signal(true);
+  // Keep the list short by default: show the first four boards (the user's own
+  // order, so the ones they drag up are the ones they see). The rest tuck under
+  // the "More" stack and one clearly labelled row expands them all.
+  const showAllChannels = signal(false);
   // Sort and pinned controls are used rarely: one small chip folds them away.
   const filtersOpen = signal(false);
   Storage.getItem("visual:filters-open").then((v) => {
@@ -220,6 +256,23 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
     animateListChange();
   }
   const pinned = signal<string | null>(null);
+
+  // Unread badges for the personal section: private messages, and replies to my
+  // own threads ("帖子消息"). Read from the forum's header while signed in;
+  // 0 hides the badge. Polled, not pushed: the forum has no push channel.
+  const pmUnread = signal(0);
+  const noticeUnread = signal(0);
+  async function refreshNotify() {
+    if (!props.user()) {
+      pmUnread.set(0);
+      noticeUnread.set(0);
+      return;
+    }
+    const counts = await loadNoticeCounts();
+    if (!counts) return; // keep whatever we had: no badge flashing to zero
+    if (counts.pm >= 0) pmUnread.set(counts.pm);
+    if (counts.notice >= 0) noticeUnread.set(counts.notice);
+  }
 
   // Touch arrangement: the user's channel order, remembered between launches.
   const channelOrder = signal<string[]>([]);
@@ -279,23 +332,40 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
   const STACK_ICON = 26;
   // The distance between icons: wider in the full column, kept in the rail where space is short.
   const stackStep = () => (railed() ? 12 : 18);
+  // Folded: the first four boards, plus the board the user last opened from More
+  // (it stays pinned to the list until another board opens). Expanded: all of them.
+  const FOLDED_COUNT = 4;
   const listed = () => {
     const all = orderedChannels();
     if (showAllChannels()) return all;
-    if (DEMO) return all.slice(0, 4);
-    return all.filter((c) => c.newPosts > 0 || c.id === pinned());
+    const top = all.slice(0, FOLDED_COUNT);
+    const pin = pinned();
+    if (pin && !top.some((c) => c.id === pin)) {
+      const picked = all.find((c) => c.id === pin);
+      if (picked) return [...top, picked];
+    }
+    return top;
   };
   const hidden = () => {
     const all = orderedChannels();
     if (showAllChannels()) return [];
-    if (DEMO) return [];
-    return all.filter((c) => c.newPosts === 0 && c.id !== pinned());
+    const shown = new Set(listed().map((c) => c.id));
+    return all.filter((c) => !shown.has(c.id));
   };
 
-  // Opening or closing More, and pinning a channel, animate the list's change.
+  // Opening or closing More, and pinning a channel, fades the list's change. Only
+  // opacity is animated: moving 19 rows with a layout animation dropped frames on
+  // tablets, while a compositor-only fade stays smooth and avoids a hard jump.
+  // Touch targets still react at once — no position or size is ever animated.
   function animateListChange() {
-    // Touch targets should react at once: a 200 ms layout animation over the
-    // whole channel column drops frames on tablets.
+    if (reduceMotion()) return;
+    const curve = { type: "easeInEaseOut" as const };
+    LayoutAnimation.configureNext({
+      duration: 220,
+      update: { ...curve, property: "opacity" },
+      create: { ...curve, property: "opacity" },
+      delete: { ...curve, property: "opacity" },
+    });
   }
   // The Android back key: close the most recent overlay first, then step out
   // of the open thread, and only then let the system exit the app.
@@ -812,6 +882,7 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
   // out closes the open list and thread: a hidden channel, or favorites, needs an
   // account, so its threads must not stay on screen. A list still loading is dropped.
   // Whether the previous run saw a signed-in user: null on launch, so only a real sign-out is quiet.
+  let notifyTimer: number | undefined;
   const wasSignedIn = signal<boolean | null>(null);
   effect(() => {
     const signedIn = !!props.user();
@@ -847,12 +918,33 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
         moreError.set(null);
       }
       reloadChannels(wasSignedIn() === true && !signedIn);
+      // Keep the unread badges fresh: once now, then every 90 s while signed in.
+      if (notifyTimer !== undefined) { clearInterval(notifyTimer); notifyTimer = undefined; }
+      if (signedIn) {
+        void refreshNotify();
+        notifyTimer = setInterval(() => { void refreshNotify(); }, 90000);
+      } else {
+        pmUnread.set(0);
+        noticeUnread.set(0);
+      }
       wasSignedIn.set(signedIn);
     });
   });
 
   // One personal-section row: a line icon, a label and a 48dp touch target.
   // These stay visible when signed out; tapping offers the sign-in sheet.
+  // Avatars for name-only rows (favorites, my threads): resolve each once when the
+  // list changes. userAvatar dedups and caches, and untracked keeps this effect from
+  // re-running when the names resolve.
+  effect(() => {
+    const ps = posts();
+    untracked(() => {
+      for (const p of ps) if (!p.uid) resolveAvatarByName(avatarName(p));
+      // "My replies" rows carry no poster at all; they fall back to my own avatar.
+      if (props.user()) resolveAvatarByName(props.user() ?? undefined);
+    });
+  });
+
   function requireSignIn(action: () => void) {
     if (!props.user()) {
       notify("sign-in", "登录后即可查看此项内容。");
@@ -862,11 +954,32 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
     action();
   }
 
-  function navRow(o: { icon: IconName; label: string; active: () => boolean; onPress: () => void }): JSX.Element {
+  function navRow(o: { icon: IconName; label: string; active: () => boolean; onPress: () => void; badge?: () => number }): JSX.Element {
+    const size = railed() ? 19 : 17;
+    const count = o.badge ? o.badge() : 0;
+    const badge = count > 0 ? (
+      <View
+        style={{
+          position: "absolute", top: -5, left: size - 8,
+          minWidth: 14, height: 14, paddingHorizontal: 3, borderRadius: 7,
+          backgroundColor: "#e5484d", alignItems: "center", justifyContent: "center",
+        }}
+      >
+        <Text style={{ fontSize: 9, color: "#ffffff", numberOfLines: 1 }}>
+          {count > 99 ? "99+" : String(count)}
+        </Text>
+      </View>
+    ) : null;
+    const iconBlock = (
+      <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+        <LineIcon name={o.icon} size={size} />
+        {badge}
+      </View>
+    );
     return (
       <View
         onPress={o.onPress}
-        accessibilityLabel={o.label}
+        accessibilityLabel={count > 0 ? `${o.label}，${count} 条未读` : o.label}
         style={{
           minHeight: 36,
           justifyContent: "center",
@@ -877,10 +990,10 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
         }}
       >
         {railed() ? (
-          <View style={{ alignItems: "center" }}><LineIcon name={o.icon} size={19} /></View>
+          <View style={{ alignItems: "center" }}>{iconBlock}</View>
         ) : (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <LineIcon name={o.icon} size={17} />
+            {iconBlock}
             <Text style={{ fontSize: 12.5, color: palette().text, flex: 1 }}>{o.label}</Text>
           </View>
         )}
@@ -1015,7 +1128,7 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
                 <ThreadRow
                   item={() => postOf(row())}
                   selected={() => (messages() ? peer() : thread())?.id === postOf(row()).id}
-                  avatar={() => avatarUrlForUid(postOf(row()).uid)}
+                  avatar={() => avatarFor(postOf(row())) ?? (replies() ? (avatarByName()[props.user() ?? ""] || undefined) : undefined)}
                   sortByDate={() => !!channel() && sortOrder() === "dateline"}
                   favorite={() => !favorites() && !!props.user() && isFavorite(postOf(row()).id)}
                   viewed={() => isViewed(postOf(row()).id)}
@@ -1086,13 +1199,15 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
               {railed() ? null : (
                 <View
                   onPress={toggleShowAllChannels}
-                  accessibilityLabel={showAllChannels() ? "只看有更新的版块" : "显示全部版块"}
+                  accessibilityLabel={showAllChannels() ? "收起，只看前四个版块" : "展开全部版块"}
                   style={{ flex: 1, minHeight: 30, flexDirection: "row", alignItems: "center", gap: 6,
                            paddingHorizontal: 6, borderRadius: 6, backgroundColor: palette().surface }}
                 >
                   <LineIcon name={showAllChannels() ? "chevronUp" : "list"} size={14} />
                   <Text style={{ fontSize: 11, color: palette().muted, flex: 1, numberOfLines: 1 }}>
-                    {showAllChannels() ? `全部 ${channels()?.length ?? 0} 个 · 收起` : `显示 ${channels()?.length ?? 0} 个版块`}
+                    {showAllChannels()
+                      ? `收起 · 前 ${FOLDED_COUNT} 个`
+                      : `展开全部 ${channels()?.length ?? 0} 个`}
                   </Text>
                 </View>
               )}
@@ -1140,9 +1255,9 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
           {/* Personal section: always visible on a tablet. Signed out, a tap
               opens the sign-in sheet instead of hiding the entry entirely. */}
           {navRow({ icon: "star", label: "收藏", active: () => favorites() && searchTerm() === null, onPress: () => requireSignIn(showFavorites) })}
-          {navRow({ icon: "doc", label: "我的主题", active: () => mine() && searchTerm() === null, onPress: () => requireSignIn(showMine) })}
+          {navRow({ icon: "doc", label: "我的主题", active: () => mine() && searchTerm() === null, onPress: () => requireSignIn(showMine), badge: () => noticeUnread() })}
           {navRow({ icon: "bubble", label: "我的回复", active: () => replies() && searchTerm() === null, onPress: () => requireSignIn(showReplies) })}
-          {navRow({ icon: "mail", label: "私信", active: () => messages() && searchTerm() === null, onPress: () => requireSignIn(showMessages) })}
+          {navRow({ icon: "mail", label: "私信", active: () => messages() && searchTerm() === null, onPress: () => requireSignIn(showMessages), badge: () => pmUnread() })}
           {navRow({ icon: "clock", label: "历史", active: () => history() && searchTerm() === null, onPress: () => requireSignIn(showHistory) })}
         </View>
         {props.footer ? props.footer(railed()) : null}
@@ -1248,7 +1363,7 @@ export function Forum(props: { footer?: (compact: boolean) => JSX.Element; user:
               <ThreadRow
                 item={() => postOf(row())}
                 selected={() => (messages() ? peer() : thread())?.id === postOf(row()).id}
-                avatar={() => avatarUrlForUid(postOf(row()).uid)}
+                avatar={() => avatarFor(postOf(row())) ?? (replies() ? (avatarByName()[props.user() ?? ""] || undefined) : undefined)}
                 sortByDate={() => !!channel() && sortOrder() === "dateline"}
                 // The favorites list is all favorites, so its rows carry no star.
                 favorite={() => !favorites() && !!props.user() && isFavorite(postOf(row()).id)}

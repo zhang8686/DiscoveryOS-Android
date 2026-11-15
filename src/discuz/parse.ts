@@ -313,7 +313,7 @@ export function parsePmUsers(html: string): Post[] {
     const at = PM_TIME.exec(item)?.[0];
     if (!uid || !name || !at) continue;
     const decoded = htmlDecode(name).trim();
-    posts.push({ id: uid, title: decoded, author: decoded, at, excerpt: "" });
+    posts.push({ id: uid, uid, title: decoded, author: decoded, at, excerpt: "" });
   }
   return posts;
 }
@@ -343,11 +343,16 @@ export function parsePmConversation(html: string): PmMessage[] {
   return messages;
 }
 
-/** The user page's UID and avatar (`DiscuzAPI.loadUser`). */
+/** The user page's UID and avatar (`DiscuzAPI.loadUser`). Reads the two
+ * independently so their order on the page does not matter. */
 export function parseUser(html: string, name: string): Author | undefined {
-  const col = captureGroups(html, '\\(UID: (\\d+)\\).*<div class="avatar"><img src="([^"]+)', true);
-  if (col.length === 0) return undefined;
-  return { id: col[0], name, avatar: col[1] };
+  const uid = /\(UID: (\d+)\)/.exec(html)?.[1] ?? "";
+  const avatar =
+    /<div class="avatar">\s*<img[^>]*\bsrc="([^"]+)"/i.exec(html)?.[1] ??
+    /class="avatar"[^>]*>[\s\S]*?<img[^>]*\bsrc="([^"]+)"/i.exec(html)?.[1] ??
+    "";
+  if (!uid && !avatar) return undefined;
+  return { id: uid, name, avatar: avatar ? htmlDecode(avatar) : "" };
 }
 
 /** What a user's profile page says about them, for the account menu. A field the page lacks is absent. */
@@ -623,6 +628,28 @@ export function fixDiscuzMarkup(html: string): string {
     codeOpen.lastIndex = end;
   }
   return out + html.slice(at);
+}
+
+/**
+ * Splits a post's `<br>` line breaks into paragraph boundaries (`</p><p>`), so
+ * NSH's text view lays each visual line out as its own block. The selectable text
+ * view resolves a long press against a block's lines; a block that spans several
+ * `<br>` lines hits only its first line, so a press on a later line lands at the
+ * block's end. One paragraph per line makes the press land on the right line.
+ * `<pre>` and `<code>` blocks are left alone — their own `\n` breaks stay put.
+ * Run after `fixDiscuzMarkup` and `fixImages`.
+ */
+export function splitBrIntoParagraphs(html: string): string {
+  if (!/<br\s*\/?>/i.test(html)) return html;
+  const openTag = (chunk: string) => chunk.replace(/<br\s*\/?>/gi, "</p><p>");
+  let out = "";
+  let at = 0;
+  const codeBlock = /<(pre|code)\b[^>]*>[\s\S]*?<\/\1>/gi;
+  for (let m = codeBlock.exec(html); m; m = codeBlock.exec(html)) {
+    out += openTag(html.slice(at, m.index)) + m[0];
+    at = m.index + m[0].length;
+  }
+  return out + openTag(html.slice(at));
 }
 
 /** The style of a Discuz `<font>` (`[color=…]` and `[size=N]`): a hex or a plain color name, and the font size in pixels. */

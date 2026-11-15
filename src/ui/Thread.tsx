@@ -4,7 +4,7 @@ import { Clipboard, createAnimatedValue, keymap, List, signal, Storage, Text, Vi
 import { Dialog, TextView } from "nsh/base";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
-import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, isAttachmentUrl, mergePage, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
+import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, isAttachmentUrl, mergePage, splitBrIntoParagraphs, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
 import { draftToPost, postToDraft, replyQuoteInDraft } from "../discuz/quote";
 import { downloadAttachment } from "./downloads";
 import { DISCUZ_EXTENSIONS, renderDiscuzNode } from "./discuzMarkup";
@@ -43,8 +43,50 @@ const G_WAIT_MS = 1000;
 // The heavy HTML transform (fixDiscuzMarkup + fixImages + absolutize) per reply id, cached at
 // module scope so it survives component remounts and re-renders: scrolling, re-rendering rows on
 // hover, and re-opening a thread do not re-parse every body. Cleared on a full (page 1) reload,
-// which is exactly when the forum may have sent fresh bodies (after a reply or an edit).
+// which is exactly when the forum may have sent fresh bodies (after a reply or an edit). The
+// cache is bounded: browsing many threads would otherwise keep every floor's HTML forever.
 const htmlCache = new Map<string, string>();
+// A virtualized list keeps well under 20 floors on screen at once; 160 parsed bodies
+// is plenty for re-opening a thread and recent scrolling, without holding every
+// floor of every thread ever visited (each body is a full HTML string).
+const HTML_CACHE_LIMIT = 160;
+
+/** Reads a reply's parsed HTML, or parses and stores it; evicts the oldest entries past the limit. */
+function cachedBodyHtml(id: string, parse: () => string): string {
+  const hit = htmlCache.get(id);
+  if (hit !== undefined) {
+    // Refresh its recency so the cache keeps the entries still in use.
+    htmlCache.delete(id);
+    htmlCache.set(id, hit);
+    return hit;
+  }
+  const html = parse();
+  htmlCache.set(id, html);
+  if (htmlCache.size > HTML_CACHE_LIMIT) {
+    // Drop the oldest quarter: the first entries are the longest-untouched.
+    const drop = Math.floor(HTML_CACHE_LIMIT / 4);
+    let n = 0;
+    for (const key of htmlCache.keys()) {
+      if (n++ >= drop) break;
+      htmlCache.delete(key);
+    }
+  }
+  return html;
+}
+
+// A Discuz post joins its text lines with `<br>`, which NSH's text view reads as
+// one block with soft breaks. On Android the selectable text view's hit-test
+// resolves a long press only against a block's first line — pressed on a later
+// line it lands at the block's end, so the word under the finger is never the one
+// selected and the handles start out collapsed there ("cannot drag, whole line
+// only"). `splitBrIntoParagraphs` (in parse.ts) turns each `<br>` into a paragraph
+// boundary so every visual line is its own block and the press lands on the right
+// line. `LINE_STYLES` zeroes the paragraph margins so one paragraph per line reads
+// as the single block it was.
+
+// Zeroes a paragraph's vertical margins, so one paragraph per line reads as the
+// single block it was. `styles` reach the `paragraph` part where `classes` does not.
+const LINE_STYLES = { paragraph: { marginTop: 0, marginBottom: 0 } } as const;
 
 // The thread's title shows in the header at the large size; the first post's
 // own heading (its title, in the body) takes the small size the header had.
@@ -114,7 +156,9 @@ export function Thread(props: {
 
   // A right swipe in the body goes back. `panActivation` fails the gesture on a small vertical move
   // (so the list still scrolls and small gestures do not trigger it); only a clear, long rightward
-  // swipe counts, so it is not easy to fire by accident.
+  // swipe counts, so it is not easy to fire by accident. A selection in the text turns it off, as
+  // that is a drag too — checked when the gesture ends rather than by taking the pan away, which
+  // would render the body again mid-gesture.
   const backPan = createAnimatedValue(0);
   const onSwipeEnd = (e: any) => {
     const dx = e?.translation?.x ?? 0;
@@ -126,22 +170,24 @@ export function Thread(props: {
   // (The HTML transform cache is module-level, declared above the component, so it survives
   // remounts and makes re-rendering rows and re-opening a thread instant.)
   function bodyHtml(r: Reply): string {
-    let h = htmlCache.get(r.id);
-    if (h === undefined) {
-      h = absolutize(trimLeadingBlanks(fixDiscuzMarkup(fixImages(r.body))), HOST);
-      htmlCache.set(r.id, h);
-    }
-    return h;
+    return cachedBodyHtml(r.id, () => absolutize(trimLeadingBlanks(splitBrIntoParagraphs(fixDiscuzMarkup(fixImages(r.body)))), HOST));
   }
+
+  // The pictures a reply shows (block images carry the original in `title`), so a
+  // floor's header can offer a reliable "view pictures" entry — the text view's
+  // own image press does not fire on the tablet.
+
 
   // True until the first reply page has loaded (or failed), so the thread shows a spinner instead of blank.
   const firstLoad = signal(true);
+  // Pull-to-refresh on the reply list (at the top): reload this thread's pages.
+  const refreshingThread = signal(false);
 
   let loadingMore = false;
   const loadingMoreShown = signal(false);
 
   function fetchPage(n: number) {
-    loadReplyPage(props.post.id, n)
+    return loadReplyPage(props.post.id, n)
       .then(({ title: pageTitle, fid: pageFid, replies: list }) => {
         if (n === 1 && pageTitle) title.set(pageTitle);
         if (pageFid && !fid()) fid.set(pageFid);
@@ -158,6 +204,13 @@ export function Thread(props: {
           // changes the bodies (see send/saveEdit/removeReply, which call it before reloading).
           scrollOffset.set(0);
         }
+        // Warm the next page in the background (after the first screen's pictures
+        // start loading) so scrolling to "load more" — and its images — continues
+        // without a network wait.
+        if (merged.more) {
+          const nextPage = n + 1;
+          setTimeout(() => { void loadReplyPage(props.post.id, nextPage).catch(() => undefined); }, 800);
+        }
       })
       .catch((e) => {
         failedPage.set(n);
@@ -167,6 +220,13 @@ export function Thread(props: {
         loadingMore = false;
         loadingMoreShown.set(false);
       });
+  }
+
+  function refreshThread() {
+    if (refreshingThread()) return;
+    refreshingThread.set(true);
+    clearThreadReplyPages(props.post.id);
+    void fetchPage(1).finally(() => refreshingThread.set(false));
   }
 
   function loadMore() {
@@ -499,7 +559,7 @@ export function Thread(props: {
         {/* The title is centred in the space right of the icons; a long one is cut off at the icons' edge,
             and fades out over its first stretch there. */}
         <View style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-          <Text style={{ numberOfLines: 1, textAlign: "center", fontSize: 22, fontWeight: 600, color: palette().text }}>{title()}</Text>
+          <Text style={{ numberOfLines: 1, textAlign: "center", fontSize: 17, fontWeight: 600, color: palette().text }}>{title()}</Text>
           <View
             style={{
               position: "absolute",
@@ -521,6 +581,8 @@ export function Thread(props: {
         estimatedItemSize={180}
         scrollValue={scrollOffset}
         onLoadMore={loadMore}
+        refreshing={refreshingThread()}
+        onRefresh={() => refreshThread()}
         footer={() => <View>{loadingMoreShown() ? <LoadingBar /> : null}</View>}
         ref={(n: ListRef | null) => {
           repliesList = n ?? undefined;
@@ -559,10 +621,16 @@ export function Thread(props: {
               </View>
             }
             body={
+              // The text is selectable in place: with each `<br>` split into its own
+              // paragraph (see `splitBrIntoParagraphs`), a long press lands on the right
+              // line and the two handles drag freely. The selection color and the handle
+              // color are one — set through `classes`, as only a class reaches it.
               <View style={{ gap: 12, alignSelf: "stretch" }}>
                 <TextView
                   html={bodyHtml(item())}
-                  styles={item().seq === 1 ? OP_TITLE_STYLES : undefined}
+                  selectable={true}
+                  styles={item().seq === 1 ? { ...OP_TITLE_STYLES, ...LINE_STYLES } : LINE_STYLES}
+                  classes={{ root: "selection:bg-blue-500" }}
                   extensions={DISCUZ_EXTENSIONS}
                   renderCustom={renderDiscuzNode}
                   onImagePress={(e: any) => {

@@ -1,7 +1,7 @@
 // Saving a post's file attachments into the Downloads folder. A press on an attachment's link
 // starts the download; the toast says when it starts, when it is saved, and why it failed.
 import { exists, mkdir, writeFile } from "fs/promises";
-import { homedir } from "os";
+import process from "process";
 import { AttachmentError, fetchAttachment, safeFileName, splitFileName } from "../discuz/attachments";
 import { notify } from "./toast";
 
@@ -13,15 +13,26 @@ const inFlight = new Set<string>();
  * Writes `bytes` into the Downloads folder under the file's name, with a number added when
  * the name is taken (`a.md`, `a (2).md`). Resolves to the path written.
  */
+/** The phone's own Downloads folder, which the app may write with the `fs` grant in
+ * nsh.json; the app's private folder comes second, for a device that refuses it. */
+const DOWNLOAD_DIRS = ["/storage/emulated/0/Download", `${process.dataDir}/Downloads`];
+
 export async function saveToDownloads(name: string, bytes: Uint8Array): Promise<string> {
-  const dir = `${homedir()}/Downloads`;
-  await mkdir(dir, { recursive: true });
   const safe = safeFileName(name);
   const { stem, ext } = splitFileName(safe);
-  let target = `${dir}/${safe}`;
-  for (let n = 2; await exists(target); n++) target = `${dir}/${stem} (${n})${ext}`;
-  await writeFile(target, bytes);
-  return target;
+  let refusal: unknown = new Error("no folder to save to");
+  for (const dir of DOWNLOAD_DIRS) {
+    try {
+      await mkdir(dir, { recursive: true });
+      let target = `${dir}/${safe}`;
+      for (let n = 2; await exists(target); n++) target = `${dir}/${stem} (${n})${ext}`;
+      await writeFile(target, bytes);
+      return target;
+    } catch (e) {
+      refusal = e;
+    }
+  }
+  throw refusal;
 }
 
 /** Downloads the attachment at `url` (named `name`) into Downloads, and reports the outcome. */

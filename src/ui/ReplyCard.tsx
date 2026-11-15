@@ -32,7 +32,7 @@ export function ReplyCard(props: {
     >
       {/* Two columns, as the Swift app: the avatar on the left, and beside it the meta line
           over the body, so the body starts under the name. */}
-      {props.avatar ? <Image src={props.avatar} fadeDuration={0} style={{ width: 36, height: 36, borderRadius: 6 }} /> : <View style={{ width: 36 }} />}
+      {props.avatar ? <Image src={props.avatar} fadeDuration={160} style={{ width: 36, height: 36, borderRadius: 6 }} /> : <View style={{ width: 36 }} />}
       <View style={{ flex: 1, gap: 6 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Text style={{ fontSize: 13, color: palette().text }}>{props.name}</Text>

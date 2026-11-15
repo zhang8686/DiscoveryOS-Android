@@ -98,7 +98,11 @@ export async function searchThreads(keyword: string): Promise<Post[]> {
 type ReplyPage = { title?: string; fid?: string; replies: Reply[] };
 
 // A thread page is reused for this long, so opening the same thread again does not ask the forum again.
-const REPLY_PAGE_TTL_MS = 2 * 60 * 1000;
+const REPLY_PAGE_TTL_MS = 10 * 60 * 1000;
+// The most pages kept: a parsed page carries every reply's full HTML body, so it is by far
+// the largest thing the app caches. 48 pages already covers several long threads at once;
+// the oldest quarter is evicted past the limit, and stale entries are dropped on every store.
+const REPLY_PAGE_LIMIT = 48;
 const replyPageCache = new Map<string, { page: ReplyPage; at: number }>();
 // Requests under way, by page: a second open while one is loading shares its answer.
 const replyPageInFlight = new Map<string, Promise<ReplyPage>>();
@@ -107,6 +111,21 @@ let replyPageGeneration = 0;
 // Bumped per thread by `clearThreadReplyPages`, so a page of that thread asked before the
 // change is not stored after it.
 const threadGenerations = new Map<string, number>();
+
+/** Stores a freshly loaded page, dropping stale pages and evicting the oldest past the limit. */
+function storeReplyPage(key: string, page: ReplyPage): void {
+  const now = Date.now();
+  // An expired page can no longer be served, but it would otherwise keep its full
+  // reply bodies in memory until a size eviction (or a sign-out) happened to run.
+  for (const [k, entry] of replyPageCache) {
+    if (now - entry.at >= REPLY_PAGE_TTL_MS) replyPageCache.delete(k);
+  }
+  replyPageCache.set(key, { page, at: now });
+  if (replyPageCache.size <= REPLY_PAGE_LIMIT) return;
+  const drop = Math.floor(REPLY_PAGE_LIMIT / 4);
+  const oldest = [...replyPageCache.entries()].sort((a, b) => a[1].at - b[1].at);
+  for (const [k] of oldest.slice(0, drop)) replyPageCache.delete(k);
+}
 
 /**
  * Forgets every cached thread page. Replies differ by account, so this runs on sign-in and sign-out.
@@ -146,7 +165,7 @@ export function loadReplyPage(tid: string, page = 1): Promise<ReplyPage> {
       // Failures are not stored (they throw above), so the next open asks again. A request
       // whose in-flight entry was forgotten (a reply posted meanwhile) is not stored either.
       const current = generation === replyPageGeneration && threadGeneration === (threadGenerations.get(tid) ?? 0);
-      if (current && replyPageInFlight.get(key) === request) replyPageCache.set(key, { page: result, at: Date.now() });
+      if (current && replyPageInFlight.get(key) === request) storeReplyPage(key, result);
       return { ...result, replies: [...result.replies] };
     })
     .finally(() => {

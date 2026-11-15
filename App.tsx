@@ -6,7 +6,7 @@ import type { Profile } from "./src/discuz/parse";
 import { clearCredentials, loadCredentials, saveCredentials } from "./src/discuz/credentials";
 import { hasSavedCookies, reloadCookies } from "./src/discuz/cookies";
 import { initVault } from "./src/discuz/vault";
-import { ImageViewer } from "./src/ui/imageViewer";
+import { ImageViewer, viewerImage } from "./src/ui/imageViewer";
 import { Forum } from "./src/ui/Forum";
 import { notify, Toaster } from "./src/ui/toast";
 import { DownloadIcon, ThemeIcon } from "./src/ui/icons";
@@ -506,8 +506,12 @@ function App() {
       {confirmOpen() ? signOutDialog : null}
       {debugEnabled && cookieImportOpen() ? <CookieImportDialog /> : null}
       {aboutOpen() ? <AboutDialog /> : null}
+      {/* Mounted only while a picture is shown: the read has to happen in this
+          reactive child position, not inside the viewer's own body, or the
+          overlay never appears when `openImageViewer` sets it later. */}
+      {viewerImage() ? <ImageViewer /> : null}
+      {/* After the viewer, so a message about saving a picture shows over it. */}
       <Toaster />
-      <ImageViewer />
 
     </View>
   );

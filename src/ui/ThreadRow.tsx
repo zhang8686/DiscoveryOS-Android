@@ -50,8 +50,10 @@ export function ThreadRow(props: {
         gap: 6,
       }}
     >
+      {/* A short native fade replaces the placeholder as the picture arrives; 0 made
+          avatars pop in abruptly, while Android's 300 ms default feels sluggish in a list. */}
       {props.avatar() ? (
-        <Image src={props.avatar()!} placeholder={PLACEHOLDER_AVATAR} fadeDuration={0} style={{ width: 24, height: 24, borderRadius: 5 }} />
+        <Image src={props.avatar()!} placeholder={PLACEHOLDER_AVATAR} fadeDuration={160} style={{ width: 24, height: 24, borderRadius: 5 }} />
       ) : (
         <View style={{ width: 24, height: 24, borderRadius: 5, backgroundColor: palette().border }} />
       )}

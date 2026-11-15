@@ -1,5 +1,5 @@
 import { expect, test } from "nsh/test";
-import { discuzFontStyle, fixDiscuzMarkup } from "./parse";
+import { discuzFontStyle, fixDiscuzMarkup, splitBrIntoParagraphs } from "./parse";
 
 test("a font's color and size, as the TextView shows them", () => {
   expect(discuzFontStyle({ color: "Red" })).toEqual({ color: "Red" });
@@ -31,4 +31,19 @@ test("a code block inside a quote keeps the quote's end", () => {
 test("links, pictures and fonts pass through", () => {
   const html = '<font color="Red">x</font><a href="https://x.test/">link</a><img src="https://x.test/a.jpg">';
   expect(fixDiscuzMarkup(html)).toBe(html);
+});
+
+test("a <br> between two lines becomes a paragraph boundary", () => {
+  expect(splitBrIntoParagraphs("第一行<br>第二行")).toBe("第一行</p><p>第二行");
+  expect(splitBrIntoParagraphs("a<br />b<br/>c")).toBe("a</p><p>b</p><p>c");
+});
+
+test("a <br> inside a quote is split, but a code block keeps its own line breaks", () => {
+  expect(splitBrIntoParagraphs('<blockquote>a<br>b</blockquote>')).toBe("<blockquote>a</p><p>b</blockquote>");
+  expect(splitBrIntoParagraphs("<pre><code>x<br>y</code></pre>tail<br>end")).toBe("<pre><code>x<br>y</code></pre>tail</p><p>end");
+});
+
+test("no <br> leaves the html untouched", () => {
+  const html = "<p>one</p><p>two</p>";
+  expect(splitBrIntoParagraphs(html)).toBe(html);
 });
