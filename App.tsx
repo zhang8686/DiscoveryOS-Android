@@ -1,4 +1,4 @@
-import { createAnimatedValue, Image, mount, Overlay, signal, Text, View, type JSX, type ViewRef } from "nsh";
+import { createAnimatedValue, Image, keyboardFrame, mount, Overlay, signal, Text, View, type JSX, type ViewRef } from "nsh";
 import { Input } from "nsh/base";
 import { currentUser, login, logout, restoreSession } from "./src/discuz/client";
 import { loadProfile } from "./src/discuz/forum";
@@ -493,7 +493,7 @@ function App() {
         backgroundColor: palette().bg,
       }}
     >
-      <View style={{ flex: 1, alignSelf: "stretch" }}>
+      <View style={{ flex: 1, alignSelf: "stretch", paddingBottom: keyboardFrame().height }}>
         {ready() ? (
           <Forum user={user} footer={(compact) => accountFooter(compact)} onSignInNeeded={() => dialogOpen.set(true)} />
         ) : (

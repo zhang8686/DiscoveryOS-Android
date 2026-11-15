@@ -3,7 +3,7 @@
 // is one line until it has the focus or has text. Both screens share this one.
 // Pasted pictures show as thumbnails above the text; they have no remove control, and
 // they go with the reply. Cmd+Enter sends (Ctrl+Enter elsewhere); Enter adds a line.
-import { effect, Image, LayoutAnimation, Picker, reduceMotion, signal, Text, untracked, View, type PasteEvent } from "nsh";
+import { effect, Image, keyboardFrame, LayoutAnimation, Picker, reduceMotion, signal, Text, untracked, View, type PasteEvent } from "nsh";
 import { LineIcon } from "./lineIcons";
 import { notify } from "./toast";
 import { useCommand } from "./commands";
@@ -105,6 +105,10 @@ export function ReplyBox(props: {
   const pictures = () => props.attachments?.() ?? [];
   const floor = props.minField ?? MIN_FIELD;
   const ceiling = props.maxField ?? MAX_FIELD;
+  // With the IME up the usable window is shorter: cap the open field to a few
+  // lines so the send/clear button row stays on screen instead of being clipped.
+  // fieldHeight keeps the real content height and restores when the IME hides.
+  const fieldCeiling = () => keyboardFrame().height > 0 ? Math.min(ceiling, 140) : ceiling;
   const fieldHeight = signal(floor);
   // The field is one line until it has the focus or has text; the send button stays in the
   // same row at the box's bottom-right corner in both states.
@@ -208,7 +212,7 @@ export function ReplyBox(props: {
           }
           style={{
             flex: 1,
-            height: collapsed() ? ONE_LINE : fieldHeight(),
+            height: collapsed() ? ONE_LINE : Math.min(fieldHeight(), fieldCeiling()),
             padding: 4,
             // The placeholder sits 3 pt further in, away from the chip's round end.
             paddingLeft: 7,
@@ -218,6 +222,20 @@ export function ReplyBox(props: {
             backgroundColor: "transparent",
           }}
         />
+        {props.draft().length > 0 ? (
+          <View
+            onPress={() => {
+              inserted = null;
+              props.onDraft("");
+              field?.focus();
+            }}
+            accessibilityLabel="清空"
+            tooltip={hint("清空输入")}
+            style={{ width: 32, height: 28, flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: palette().surface }}
+          >
+            <Text style={{ fontSize: 18, color: palette().muted }}>×</Text>
+          </View>
+        ) : null}
         {props.onAttach ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}>
             <View onPress={pickImages} accessibilityLabel="添加图片"

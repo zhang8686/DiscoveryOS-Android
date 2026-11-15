@@ -5,8 +5,10 @@ uncompressed and page-aligned (loaded straight from the APK). Flipping the
 flag to true and deflating those entries cuts the download size by roughly
 60% at the cost of the installer unpacking the libraries onto the device.
 
-Only two things change in the archive:
+Only three things change in the archive:
   * the boolean attribute `android:extractNativeLibs` (4 bytes in binary XML)
+  * `android:windowSoftInputMode`: adjustPan (0x10) -> adjustNothing (0x30), so
+    Android never moves the window; the app lifts itself with keyboardFrame()
   * the ZIP storage method of `lib/<abi>/*.so` entries
 
 Every other entry keeps its original storage method (notably `resources.arsc`,
@@ -100,6 +102,43 @@ def flip_extract_native_libs(axml):
     raise SystemExit("error: extractNativeLibs attribute not found in manifest")
 
 
+def set_adjust_nothing(axml):
+    """Return (xml_bytes, changed). Change android:windowSoftInputMode from
+    adjustPan (0x10) to adjustNothing (0x30): the window keeps its full size, so
+    the NSH surface never has to re-layout after the IME hides (which left a
+    keyboard-height blank strip at the top). The app lifts its own content with
+    keyboardFrame().height instead. Idempotent."""
+    buf = bytearray(axml)
+    ctype, hsize, _total = struct.unpack_from("<HHI", buf, 0)
+    assert ctype == 3, "not a binary AndroidManifest.xml"
+    strings = []
+    off = hsize
+    while off + 8 <= len(buf):
+        ct, hs, cs = struct.unpack_from("<HHI", buf, off)
+        if cs < 8:
+            break
+        if ct == 1:
+            strings, _ = parse_string_pool(buf, off)
+        elif ct == 0x0102:  # RES_XML_START_ELEMENT_TYPE
+            attr_start, attr_size, attr_count, _, _, _ = struct.unpack_from(
+                "<HHHHHH", buf, off + hs + 8)
+            attrs = off + hs + attr_start
+            for i in range(attr_count):
+                a = attrs + i * attr_size
+                name = struct.unpack_from("<I", buf, a + 4)[0]
+                label = strings[name] if name < len(strings) else "?"
+                if label == "windowSoftInputMode":
+                    _size, _res0, dtype, data = struct.unpack_from("<HBBI", buf, a + 12)
+                    assert dtype in (0x10, 0x11), (
+                        f"windowSoftInputMode is not an int (type {dtype:#x})")
+                    if data == 0x30:
+                        return bytes(axml), False  # already adjustNothing
+                    struct.pack_into("<I", buf, a + 16, 0x30)
+                    return bytes(buf), True
+        off += cs
+    raise SystemExit("error: windowSoftInputMode attribute not found in manifest")
+
+
 def zopfli_raw_deflate(data: bytes, iterations: int) -> bytes:
     """A raw DEFLATE stream from Zopfli, which searches far harder than zlib for
     an optimal parse. ZIP entries carry raw DEFLATE, while the Python binding
@@ -150,7 +189,9 @@ def write_precompressed(zout, src_info, data: bytes, raw: bytes) -> None:
 
 def repack(src, dst, zopfli_iterations=None):
     zin = zipfile.ZipFile(src)
-    manifest, changed = flip_extract_native_libs(zin.read(MANIFEST))
+    manifest, c1 = flip_extract_native_libs(zin.read(MANIFEST))
+    manifest, c2 = set_adjust_nothing(manifest)
+    changed = c1 or c2
     so_names = [i.filename for i in zin.infolist()
                 if i.filename.startswith(SO_PREFIX) and i.filename.endswith(SO_SUFFIX)]
     if not so_names:
@@ -209,7 +250,7 @@ def main():
         raise SystemExit("error: --zopfli iterations must be >= 1")
     args.dst.parent.mkdir(parents=True, exist_ok=True)
     kept, nso, so_bytes, changed = repack(args.src, args.dst, args.zopfli)
-    print(f"manifest extractNativeLibs -> true: {'changed' if changed else 'already true'}")
+    print(f"manifest patched (extractNativeLibs=true, windowSoftInputMode=adjustNothing): {'changed' if changed else 'already patched'}")
     print(f"native libraries deflated: {nso} | entries kept: {kept} (old signature dropped)")
     print(f"encoder: {'zopfli ' + str(args.zopfli) + ' iterations' if args.zopfli else 'zlib -9'}")
     print(f"compressed .so total: {so_bytes:,} B")

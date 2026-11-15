@@ -53,7 +53,7 @@
 
 | 项目 | 数值 |
 | --- | --- |
-| 当前版本 | 1.0.25（versionCode 27） |
+| 当前版本 | 1.0.26（versionCode 28） |
 | APK 体积 | 约 18.9 MB（单 arm64-v8a） |
 | 应用自身逻辑包 | 约 245 KB（`assets/nsh/bundle.nshc`） |
 | 应用图标 | 约 13 KB |
@@ -70,7 +70,7 @@
 
 ## 安装
 
-1. 从 [Releases](https://github.com/zhang8686/DiscoveryOS-Tablet/releases) 下载最新版 `DiscoveryOS-AndroidPad-V1.0.25.apk`。
+1. 从 [Releases](https://github.com/zhang8686/DiscoveryOS-Tablet/releases) 下载最新版 `DiscoveryOS-AndroidPad-V1.0.26.apk`。
 2. 在 Android 平板上打开该文件；首次安装时系统可能要求为安装来源开启「允许安装未知应用」，授权一次即可。
 3. 仅支持 **arm64-v8a** 设备，32 位平板不在支持范围。
 4. 论坛内容需要登录后查看，请在应用内登录 4d4y 账号。
@@ -89,7 +89,7 @@ nsh package App.tsx --target android --icon icon.png --abi arm64-v8a \
 python scripts/slim_apk.py .nsh/out/DiscoveryOS.apk unsigned.apk --zopfli
 zipalign -f -p 4 unsigned.apk aligned.apk
 apksigner sign --ks <release.jks> --ks-key-alias <alias> \
-  --out DiscoveryOS-AndroidPad-V1.0.25.apk aligned.apk
+  --out DiscoveryOS-AndroidPad-V1.0.26.apk aligned.apk
 ```
 
 `scripts/slim_apk.py` 把清单中的 `android:extractNativeLibs` 设为 `true`，把 `lib/<abi>/*.so` 改为压缩存储；加 `--zopfli` 时再用最优 DEFLATE 重压该原生库（约省 0.55 MB）。其余条目逐字节保留，应用代码与资源不受影响。重打包后必须用同一 release keystore 重新签名。
