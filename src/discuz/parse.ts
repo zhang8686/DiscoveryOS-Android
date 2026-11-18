@@ -40,6 +40,8 @@ export type Channel = { id: string; title: string; description: string; newPosts
 export type Post = {
   id: string;
   title: string;
+  /** A coloured thread title, as the forum posted it (`<font color>` or a style). */
+  color?: string;
   uid?: string;
   author?: string;
   at?: string;
@@ -57,6 +59,20 @@ export type Post = {
 };
 
 /** The channels on the index page (`DiscuzAPI.loadChannels`). */
+/** A board's name, cleared of what a served page leaves on it: a trailing count (a parsing
+ * leftover such as "iPhone 16 PM 23545"), and characters the device font has no glyph for
+ * (they draw as boxes). */
+export function cleanChannelTitle(raw: string): string {
+  return htmlDecode(raw)
+    .replace(/\s*\d{3,}\s*$/, "")
+    .replace(/[\u{10000}-\u{10FFFF}]/gu, "")
+    // Boxes on this device come from pictures (emoji), the replacement character, and private-use
+    // glyphs (symbol fonts the app has not got).
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{FFFD}\u{E000}-\u{F8FF}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function parseChannels(html: string): Channel[] {
   const channels: Channel[] = [];
   for (const row of captureGroups(html, "<tr>.*?</tr>")) {
@@ -64,7 +80,7 @@ export function parseChannels(html: string): Channel[] {
     if (col.length === 0) continue;
     const field = captureGroups(row, "今日: <strong>(\\d+)", true);
     const newPosts = field.length === 1 ? Number(field[0]) || 0 : 0;
-    channels.push({ id: col[0], title: col[1], description: col[2], newPosts });
+    channels.push({ id: col[0], title: cleanChannelTitle(col[1]), description: col[2], newPosts });
   }
   return channels;
 }
@@ -74,7 +90,7 @@ export function parseChannels(html: string): Channel[] {
 export function parseChannelLinks(html: string): Channel[] {
   const found = new Map<string, Channel>();
   for (const m of html.matchAll(/forumdisplay\.php\?fid=(\d+)[^>]*>([^<]{1,60})<\/a>/g)) {
-    const title = htmlDecode(m[2]).trim();
+    const title = cleanChannelTitle(m[2]);
     if (!m[1] || !title || /^[\d\s&]+$/.test(title)) continue;
     if (!found.has(m[1])) found.set(m[1], { id: m[1], title, description: "", newPosts: 0 });
   }
@@ -91,7 +107,7 @@ export function parsePosts(html: string, order: "dateline" | "lastpost" = "lastp
   for (const row of captureGroups(html, "<tr>.*?</tr>")) {
     const col = captureGroups(
       row,
-      '<span[^>]*><a href="viewthread\\.php\\?tid=(\\d+)[^>]*>([^<]+).*href="space\\.php\\?uid=(\\d+)">([^<]+)</a>.*<em>(\\d{4}-\\d{1,2}-\\d{1,2})</em>.*<td class="nums"><strong>(\\d+)</strong>/<em>(\\d+)</em></td>.*space\\.php\\?username=[^"]+">([^<]+)<.*lastpost">([^<]+)<',
+      '<span[^>]*><a href="viewthread\\.php\\?tid=(\\d+)[^>]*>([\\s\\S]*?)</a>.*?href="space\\.php\\?uid=(\\d+)">([^<]+)</a>.*<em>(\\d{4}-\\d{1,2}-\\d{1,2})</em>.*<td class="nums"><strong>(\\d+)</strong>/<em>(\\d+)</em></td>.*space\\.php\\?username=[^"]+">([^<]+)<.*lastpost">([^<]+)<',
       true,
     );
     if (col.length === 0) continue;
@@ -101,9 +117,14 @@ export function parsePosts(html: string, order: "dateline" | "lastpost" = "lastp
     // minute; when the page gives only the date, the date is used.
     const authorCell = /<td[^>]*class="author"[^>]*>([\s\S]*?)<\/td>/i.exec(row)?.[1] ?? "";
     const atFull = /title="(\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)"/.exec(authorCell)?.[1]?.trim();
+    // The title may carry the forum's own colour (`<font color="red">`, a style); the text is
+    // read without those tags, the colour kept for the row to draw.
+    const rawTitle = col[1];
+    const titleColor = /color\s*[:=]\s*["']?(#[0-9a-f]{3,8}|[a-z]+)/i.exec(rawTitle)?.[1];
     posts.push({
       id: col[0],
-      title: htmlDecode(col[1]),
+      title: htmlDecode(rawTitle.replace(/<[^>]*>/g, "")),
+      color: titleColor,
       uid: col[2],
       author: removePercentEncoding(col[3]),
       at: atFull ?? col[4],
@@ -230,10 +251,15 @@ export function parseBookmarks(html: string): Post[] {
       true,
     );
     if (col.length === 0) continue;
+    // The row's author cell links the poster's space by uid; that uid builds the avatar URL
+    // directly, instead of resolving the name through a profile page (which often comes back
+    // without a picture, leaving the row a blank grey square).
+    const uid = /space\.php\?uid=(\d+)/.exec(row)?.[1];
     posts.push({
       id: col[0],
       title: htmlDecode(col[1]),
       fid: col[2],
+      uid,
       replies: Number(col[4]) || 0,
       lastReplyBy: removePercentEncoding(col[5]),
       lastReplyAt: col[6],
@@ -255,10 +281,13 @@ export function parseMyThreads(html: string): Post[] {
       true,
     );
     if (col.length === 0) continue;
+    // As on the favorites page, the row's space link carries the uid that names the avatar.
+    const uid = /space\.php\?uid=(\d+)/.exec(row)?.[1];
     posts.push({
       id: col[0],
       title: htmlDecode(col[1]).trim(),
       fid: col[2],
+      uid,
       lastReplyBy: removePercentEncoding(col[5]),
       lastReplyAt: col[6],
     });
@@ -343,10 +372,29 @@ export function parsePmConversation(html: string): PmMessage[] {
   return messages;
 }
 
+/** A login page's security questions (`logging.php?action=login`): the value the form posts as
+ * `questionid`, and the question it asks. The forum's own list is used when the page has one. */
+export function parseLoginQuestions(html: string): { id: number; text: string }[] {
+  const select = /<select[^>]*name="questionid"[^>]*>([\s\S]*?)<\/select>/i.exec(html)?.[1];
+  if (!select) return [];
+  const questions: { id: number; text: string }[] = [];
+  for (const m of select.matchAll(/<option[^>]*value="(\d+)"[^>]*>([^<]*)<\/option>/gi)) {
+    const text = htmlDecode(m[2]).trim();
+    if (text) questions.push({ id: Number(m[1]), text });
+  }
+  return questions;
+}
+
 /** The user page's UID and avatar (`DiscuzAPI.loadUser`). Reads the two
  * independently so their order on the page does not matter. */
 export function parseUser(html: string, name: string): Author | undefined {
-  const uid = /\(UID: (\d+)\)/.exec(html)?.[1] ?? "";
+  // Discuz prints `(UID: 123)`, but the space page's own markup varies; a bare `UID: 123`
+  // or a `space.php?uid=` link names the same member, and either is enough for the avatar URL.
+  const uid =
+    /\(UID: (\d+)\)/.exec(html)?.[1] ??
+    /\bUID:\s*(\d+)/.exec(html)?.[1] ??
+    /space\.php\?uid=(\d+)/.exec(html)?.[1] ??
+    "";
   const avatar =
     /<div class="avatar">\s*<img[^>]*\bsrc="([^"]+)"/i.exec(html)?.[1] ??
     /class="avatar"[^>]*>[\s\S]*?<img[^>]*\bsrc="([^"]+)"/i.exec(html)?.[1] ??
@@ -490,7 +538,7 @@ export function threadIdFromLink(href: string): string | undefined {
  * heading, else the page `<title>` (`subject - channel - site`) without its
  * site and channel suffixes.
  */
-export function parseThreadPageInfo(html: string): { title?: string; fid?: string } {
+export function parseThreadPageInfo(html: string): { title?: string; fid?: string; lastPage?: number } {
   const subject = /<span id="thread_subject">([\s\S]*?)<\/span>/.exec(html)?.[1];
   const pageTitle = /<title>([\s\S]*?)<\/title>/i.exec(html)?.[1];
   const fid = /forumdisplay\.php\?fid=(\d+)/.exec(html)?.[1];
@@ -501,7 +549,22 @@ export function parseThreadPageInfo(html: string): { title?: string; fid?: strin
     if (htmlDecode(fromTitle).endsWith(suffix)) fromTitle = htmlDecode(fromTitle).slice(0, -suffix.length);
   }
   const title = subject ? htmlDecode(subject.replace(/<[^>]*>/g, "")).trim() : fromTitle ? htmlDecode(fromTitle).trim() : undefined;
-  return { title: title || undefined, fid };
+  // Only add the key when the pager names it, so a page without one keeps the shape callers knew.
+  const lastPage = parseLastPage(html);
+  return { title: title || undefined, fid, ...(lastPage !== undefined ? { lastPage } : {}) };
+}
+
+/**
+ * A thread's last page. Discuz's pager prints `当前页/总页数` in
+ * `<em id="page">2/9</em>`; failing that, the largest `page=` a pager link asks
+ * for. `undefined` when the page carries no pager (a one-page thread, or a
+ * signed-out notice), so the jump-to-last control simply scrolls to the end.
+ */
+export function parseLastPage(html: string): number | undefined {
+  const marked = /<em[^>]*id="page"[^>]*>\s*\d+\s*\/\s*(\d+)\s*<\/em>/i.exec(html)?.[1];
+  let last = marked ? Number(marked) : 0;
+  for (const m of html.matchAll(/(?:[?&]|&amp;)page=(\d+)/gi)) last = Math.max(last, Number(m[1]));
+  return last > 0 ? last : undefined;
 }
 
 /** Drops the empty lines a post starts with (`<br>`, or empty paragraphs and
@@ -554,22 +617,18 @@ export function fixImages(html: string): string {
         .replace(/\s+/g, " ").trim();
       return `<img src="${small}"${kept ? " " + kept : ""}>`;
     }
-    // The site's own compressed display copy loads fast; width=100% keeps the
-    // drawn size unchanged whatever the source's pixel size. The picture is kept
-    // STANDALONE (not wrapped in an <a>): the text view reports a press on an image
-    // that is not in a link through `onImagePress`, which opens the zoomable viewer —
-    // a link-wrapped image reported no press on the tablet. The original URL rides in
-    // `title` so the viewer can show the full-size picture.
+    // The site's own compressed display copy loads fast; width=100% keeps the drawn size
+    // unchanged whatever the source's pixel size. A tap on the picture opens the original in the
+    // zoomable viewer through onLinkPress. No inline style: the text view's HTML reader did not
+    // take it, and a body laid out at the picture's own size pushed the players out of reach.
     const original = absoluteUrl(full ?? small, HOST_BASE);
     const kept = attrs
       .replace(/\bsrc="[^"]*"/i, "")
       .replace(/\bfile="[^"]*"/i, "")
       .replace(/\bonclick="[^"]*"/i, "")
-      .replace(/\btitle="[^"]*"/i, "")
-      .replace(/\balt="[^"]*"/i, "")
       .replace(/\s(width|height)="[^"]*"/gi, "")
       .replace(/\s+/g, " ").trim();
-    return `<p><img src="${small}" title="${escapeAttr(original)}"${kept ? " " + kept : ""} width="100%"></p>`;
+    return `<p><a href="${original}"><img src="${small}"${kept ? " " + kept : ""} width="100%"></a></p>`;
   });
 }
 
@@ -627,7 +686,11 @@ export function fixDiscuzMarkup(html: string): string {
     at = end;
     codeOpen.lastIndex = end;
   }
-  return out + html.slice(at);
+  return (out + html.slice(at))
+    // A media embed (an iframe, or the forum's [media] BBCode left as text) draws as nothing in
+    // the text view: a link stands in its place, and the player under the post plays it.
+    .replace(/<iframe\b[^>]*\bsrc="([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi, (_, src: string) => `<p><a href="${src}">▶ ${src}</a></p>`)
+    .replace(/\[media(?:=[^\]]*)?\]([\s\S]*?)\[\/media\]/gi, (_, body: string) => `<p><a href="${body.trim()}">▶ ${body.trim()}</a></p>`);
 }
 
 /**

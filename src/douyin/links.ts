@@ -9,7 +9,9 @@ export type DouyinRef = { id: string } | { url: string };
 export const MAX_DOUYIN_PER_POST = 2;
 
 /** The page a Douyin video id plays on. */
-export const douyinPageUrl = (id: string) => `https://www.douyin.com/jingxuan?modal_id=${id}`;
+// The share page (not the feed's modal): a light page that draws the video and its player on its
+// own, where the feed page shows nothing in a web view.
+export const douyinPageUrl = (id: string) => `https://www.iesdouyin.com/share/video/${id}/`;
 
 const PATTERNS: { re: RegExp; ref: (m: RegExpMatchArray) => DouyinRef }[] = [
   // www.douyin.com/video/<id> (also m.douyin.com, douyin.com)

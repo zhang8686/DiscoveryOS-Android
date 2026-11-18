@@ -1,32 +1,22 @@
 // A Bilibili video linked from a post: a tap-to-play card that loads Bilibili's
 // own player in a WebView. Members-only videos need the sign-in panel below it.
-import { signal, Text, View, WebView, type WebViewRef } from "nsh";
+import { effect, signal, Text, View, WebView, type WebViewRef } from "nsh";
 import { type BiliVideoId } from "../bilibili/links";
 import { resolveBiliShort } from "../bilibili/resolve";
 import { biliSignedIn, loadBiliSession } from "../bilibili/session";
+import { playerRatio, videoShape, type VideoShape } from "../bilibili/video";
 import { palette } from "./appearance";
 import { BiliLogin } from "./BiliLogin";
-import { ShortLinkPlayer } from "./ShortLinkPlayer";
+import { ShortCard, ShortLinkPlayer } from "./ShortLinkPlayer";
+import { VIDEO_FULLSCREEN_SCRIPT } from "./webviewFullscreen";
+import { MUTE_VIDEO_SCRIPT, PAUSE_VIDEO_SCRIPT, setMutedScript, videoPauseTick } from "./videoPause";
+import { MuteToggle } from "./MuteToggle";
 
-// The "blackboard" HTML5 mobile player: Bilibili's embed that is just the video player (no "下载 App"
-// bar of `player.html`), though it still draws a small top promo bar on mobile.
-const playerUrl = (video: BiliVideoId) =>
-  `https://www.bilibili.com/blackboard/html5mobileplayer.html?${"bvid" in video ? `bvid=${video.bvid}` : `aid=${video.aid}`}&page=1&autoplay=0&danmaku=0&high_quality=1`;
-const videoLabel = (video: BiliVideoId) => ("bvid" in video ? video.bvid : `av${video.aid}`);
-
-// The box is a fixed 16:11 (a little taller than 16:9) so the player's top bar has room AND the video
-// still shows whole, and — crucially — the height is known when the layer is laid out, so the thread's
-// list measures the card at this height at once. A height set later from JS (width measured after
-// layout) was NOT re-measured by the list, so the card clipped the bottom (the "layer frame" cut it).
-const ASPECT = 16 / 11;
-
-// Runs inside the page: keeps the video contained so nothing is cropped.
-const FIT_SCRIPT = `(() => {
-  const st = document.createElement('style');
-  st.textContent = 'html,body{margin:0!important;padding:0!important;height:100%!important;overflow:hidden!important;background:#000!important;}'
-    + 'video{object-fit:contain!important;max-width:100%!important;max-height:100%!important;}';
-  (document.head || document.documentElement).appendChild(st);
-})();`;
+const playerUrl = (video: BiliVideoId) => {
+  const id = "bvid" in video ? `bvid=${video.bvid}` : "ep" in video ? `ep_id=${video.ep}` : `aid=${video.aid}`;
+  return `https://player.bilibili.com/player.html?${id}&page=1&high_quality=1&autoplay=0`;
+};
+const videoLabel = (video: BiliVideoId) => ("bvid" in video ? video.bvid : "ep" in video ? `ep${video.ep}` : `av${video.aid}`);
 
 /** A short link (b23.tv) to a Bilibili video: resolved to the video, then shown as a BiliPlayer. */
 export function BiliShortPlayer(props: { url: string }) {
@@ -35,7 +25,8 @@ export function BiliShortPlayer(props: { url: string }) {
       url={props.url}
       resolve={resolveBiliShort}
       play={(video) => <BiliPlayer video={video} />}
-      fallbackSize={{ aspectRatio: ASPECT }}
+      fallbackSize={{ aspectRatio: 16 / 9 }}
+      fallback={<ShortCard label="打开 B 站视频" url={props.url} />}
     />
   );
 }
@@ -43,24 +34,44 @@ export function BiliShortPlayer(props: { url: string }) {
 export function BiliPlayer(props: { video: BiliVideoId }) {
   const started = signal(false);
   const loginShown = signal(false);
+  // Every player starts muted; this is the switch for the one being watched.
+  const muted = signal(true);
+  // 16:9 until the video's own size arrives, so the card keeps its shape while loading.
+  const ratio = signal(playerRatio({ width: 16, height: 9 }));
   let player!: WebViewRef;
+  function toggleMute(): void {
+    const next = !muted();
+    muted.set(next);
+    player?.injectJavaScript(setMutedScript(next));
+  }
+  // A scroll in the thread pauses the video; it does not resume when the scroll ends.
+  effect(() => {
+    if (videoPauseTick() > 0) player?.injectJavaScript(PAUSE_VIDEO_SCRIPT);
+  });
   loadBiliSession();
-
-  const size = () => ({ aspectRatio: ASPECT, backgroundColor: "#000", borderRadius: 8 });
+  videoShape(props.video)
+    .then((shape: VideoShape) => ratio.set(playerRatio(shape)))
+    .catch(() => undefined);
 
   return (
-    <View style={{ gap: 8, alignSelf: "stretch" }}>
+    <View style={{ gap: 8, alignSelf: "stretch", position: "relative" }}>
       {started() ? (
-        <WebView ref={player} src={playerUrl(props.video)} injectedJavaScript={FIT_SCRIPT} style={size()} />
+        <WebView
+          ref={player}
+          src={playerUrl(props.video)}
+          injectedJavaScript={VIDEO_FULLSCREEN_SCRIPT + "\n" + MUTE_VIDEO_SCRIPT}
+          style={{ aspectRatio: ratio(), backgroundColor: "#000", borderRadius: 8 }}
+        />
       ) : (
         <View
           onPress={() => started.set(true)}
           accessibilityLabel={`Play Bilibili video ${videoLabel(props.video)}`}
-          style={{ ...size(), alignItems: "center", justifyContent: "center" }}
+          style={{ aspectRatio: ratio(), borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#000" }}
         >
           <Text style={{ fontSize: 16, color: "#fff" }}>{`▶ 播放 B 站视频 ${videoLabel(props.video)}`}</Text>
         </View>
       )}
+      {started() ? <MuteToggle muted={muted()} onToggle={toggleMute} /> : null}
       <View onPress={() => loginShown.set(!loginShown())} accessibilityLabel="B 站登录">
         <Text style={{ fontSize: 12, color: palette().link }}>{biliSignedIn() ? "B 站已登录（点击查看）" : "登录 B 站（会员视频需要）"}</Text>
       </View>

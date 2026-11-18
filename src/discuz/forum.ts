@@ -1,5 +1,5 @@
 // The forum pages: the channel list and a channel's thread list.
-import { currentFormHash, currentUser, findFloor, isLoginRequired, request } from "./client";
+import { currentFormHash, currentUser, findFloor, isLoginRequired, pageSize, request } from "./client";
 import { parseBookmarks, parseChannels, parseChannelLinks, parseMyReplies, parseMyThreads, parsePmConversation, parsePmUsers, parsePosts, parseProfile, parseReplies, parseSearchResults, parseThreadPageInfo, parseUser, type Author, type Channel, type PmMessage, type Post, type Profile, type Reply } from "./parse";
 import { formEncodeGb, htmlEntities } from "./encoding";
 import { BUILTIN_CHANNELS, mergeChannels } from "./channels";
@@ -61,6 +61,9 @@ export async function loadPosts(fid: string, page = 1, order: SortOrder = "lastp
     ["page", String(page)],
     ["orderby", order],
     ["filter", order === "lastpost" ? "2592000" : ""],
+    // A full page (the forum's own per-page setting, 50 here) arrives in one round-trip, so the
+    // next one can be fetched while the reader is still well short of the list's end.
+    ["ppp", String(pageSize)],
   ];
   const html = await request("GET", "forumdisplay.php", { query });
   // The forum's own order is kept as returned — the same order its web page shows. The 微信模式
@@ -95,14 +98,14 @@ export async function searchThreads(keyword: string): Promise<Post[]> {
   return posts;
 }
 
-type ReplyPage = { title?: string; fid?: string; replies: Reply[] };
+type ReplyPage = { title?: string; fid?: string; lastPage?: number; replies: Reply[] };
 
 // A thread page is reused for this long, so opening the same thread again does not ask the forum again.
 const REPLY_PAGE_TTL_MS = 10 * 60 * 1000;
 // The most pages kept: a parsed page carries every reply's full HTML body, so it is by far
-// the largest thing the app caches. 48 pages already covers several long threads at once;
+// the largest thing the app caches. 32 pages already covers several long threads at once;
 // the oldest quarter is evicted past the limit, and stale entries are dropped on every store.
-const REPLY_PAGE_LIMIT = 48;
+const REPLY_PAGE_LIMIT = 32;
 const replyPageCache = new Map<string, { page: ReplyPage; at: number }>();
 // Requests under way, by page: a second open while one is loading shares its answer.
 const replyPageInFlight = new Map<string, Promise<ReplyPage>>();

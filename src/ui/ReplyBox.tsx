@@ -9,6 +9,7 @@ import { notify } from "./toast";
 import { useCommand } from "./commands";
 import { Input } from "nsh/base";
 import { palette } from "./appearance";
+import { textFieldFocused } from "./keyboard";
 import { PlaneIcon, RefreshIcon } from "./icons";
 import { hint } from "./Hint";
 import type { PixelSize } from "./pixelSize";
@@ -205,8 +206,8 @@ export function ReplyBox(props: {
             if (e.files.length > 0 || e.uris.length > 0) inserted = e.text || null;
             props.onPaste?.(e);
           }}
-          onFocus={() => focused.set(true)}
-          onBlur={() => focused.set(false)}
+          onFocus={() => { focused.set(true); textFieldFocused.set(true); }}
+          onBlur={() => { focused.set(false); textFieldFocused.set(false); }}
           onContentSizeChange={({ size }: { size: { height: number } }) =>
             fieldHeight.set(Math.min(ceiling, Math.max(floor, Math.ceil(size.height) + 8)))
           }
@@ -219,6 +220,11 @@ export function ReplyBox(props: {
             // One line: the padding centres the 17 pt line in the field's height.
             paddingVertical: collapsed() ? (ONE_LINE - 17) / 2 : 4,
             fontSize: 14,
+            // The field had no colour of its own: Android drew its text black, which disappeared
+            // on the dark surface. Follow the palette, as the rest of the box does.
+            color: palette().text,
+            placeholderColor: palette().muted,
+            caretColor: palette().link,
             backgroundColor: "transparent",
           }}
         />

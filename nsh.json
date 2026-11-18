@@ -1,13 +1,14 @@
 {
   "name": "DiscoveryOS",
   "id": "com.Android.DiscoveryOS",
-  "version": "1.0.26",
-  "build": 28,
+  "version": "1.0.33",
+  "build": 35,
   "icon": "icon.png",
   "android": {
     "targetSdk": 35
   },
   "capabilities": {
+    "statusBar": true,
     "network": {
       "hosts": [
         "www.4d4y.com",

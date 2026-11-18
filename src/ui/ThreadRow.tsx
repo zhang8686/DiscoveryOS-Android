@@ -5,6 +5,7 @@ import { Image, Text, View } from "nsh";
 import type { Post } from "../discuz/parse";
 import { timeAgo } from "../discuz/timeAgo";
 import { palette } from "./appearance";
+import { displaySettings } from "./settings";
 import { PLACEHOLDER_AVATAR } from "../discuz/avatarUrl";
 
 function meta(p: Post, byDate: boolean): string {
@@ -53,13 +54,13 @@ export function ThreadRow(props: {
       {/* A short native fade replaces the placeholder as the picture arrives; 0 made
           avatars pop in abruptly, while Android's 300 ms default feels sluggish in a list. */}
       {props.avatar() ? (
-        <Image src={props.avatar()!} placeholder={PLACEHOLDER_AVATAR} fadeDuration={160} style={{ width: 24, height: 24, borderRadius: 5 }} />
+        <Image src={props.avatar()!} placeholder={PLACEHOLDER_AVATAR} fadeDuration={160} style={{ width: 32, height: 32, borderRadius: 7 }} />
       ) : (
-        <View style={{ width: 24, height: 24, borderRadius: 5, backgroundColor: palette().border }} />
+        <View style={{ width: 32, height: 32, borderRadius: 7, backgroundColor: palette().border }} />
       )}
       <View style={{ flex: 1, gap: 2 }}>
         {/* A favorite's star is a span of the title's own text, so it sits on the first line and wraps with it. */}
-        <Text style={{ numberOfLines: 2, fontSize: 12.5, color: props.viewed() ? palette().muted : palette().text, fontWeight: props.viewed() ? 400 : 600 }}>
+        <Text style={{ numberOfLines: 2, fontSize: displaySettings().list, color: props.item().color ?? (props.viewed() ? palette().muted : palette().text), fontWeight: props.viewed() ? 400 : 600 }}>
           {props.favorite() ? <Text style={{ fontSize: 11, color: palette().muted }}>{"★ "}</Text> : null}
           {props.item().title}
         </Text>

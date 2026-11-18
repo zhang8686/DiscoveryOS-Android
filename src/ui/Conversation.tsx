@@ -11,12 +11,20 @@ import { notify } from "./toast";
 import { openLink } from "./links";
 import { ReplyBox } from "./ReplyBox";
 import { ReplyCard } from "./ReplyCard";
+import { LineIcon } from "./lineIcons";
+import { hint } from "./Hint";
 
 const draftKey = (uid: string) => `pm-draft:${uid}`;
 
 // `onOpenThread` takes a press on a link to a 4d4y thread, which the thread column then shows.
 // `onSwipeBack` returns to the list on a right swipe, as a thread does.
-export function Conversation(props: { peer: () => Post; onOpenThread?: (tid: string) => void; onSwipeBack?: () => void }) {
+export function Conversation(props: {
+  peer: () => Post;
+  onOpenThread?: (tid: string) => void;
+  onSwipeBack?: () => void;
+  /** Portrait: opens the boards and message list, which stay out of the body's way there. */
+  onOpenSidebars?: () => void;
+}) {
   const messages = signal<PmMessage[] | null>(null);
   const draft = signal("");
   const sending = signal(false);
@@ -28,7 +36,8 @@ export function Conversation(props: { peer: () => Post; onOpenThread?: (tid: str
   const onSwipeEnd = (e: any) => {
     const dx = e?.translation?.x ?? 0;
     const vx = e?.velocity?.x ?? 0;
-    if (!e?.cancelled && (dx > 150 || vx > 1700)) props.onSwipeBack?.();
+    // The same default-level gesture as a thread's body: a short drag or a light flick goes back.
+    if (!e?.cancelled && (dx > 60 || vx > 700)) props.onSwipeBack?.();
     backPan.set(0);
   };
 
@@ -81,11 +90,22 @@ export function Conversation(props: { peer: () => Post; onOpenThread?: (tid: str
   return (
     <View
       pan={props.onSwipeBack ? { x: backPan } : undefined}
-      panActivation={props.onSwipeBack ? { activeOffsetX: 48, failOffsetY: 12 } : undefined}
+      panActivation={props.onSwipeBack ? { activeOffsetX: 18, failOffsetY: 10 } : undefined}
       onPanEnd={props.onSwipeBack ? onSwipeEnd : undefined}
       style={{ flex: 1 }}
     >
       <View style={{ padding: 12, flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
+        {/* Portrait: the two list columns are hidden, so this opens them as an overlay. */}
+        {props.onOpenSidebars ? (
+          <View
+            onPress={props.onOpenSidebars}
+            accessibilityLabel="版块与私信列表"
+            tooltip={hint("版块与私信列表")}
+            style={{ position: "absolute", left: 12, top: 8, width: 30, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 6 }}
+          >
+            <LineIcon name="grip" size={17} />
+          </View>
+        ) : null}
         <Text style={{ fontSize: 22, fontWeight: 600, color: palette().text }}>{`和 ${props.peer().title} 的对话`}</Text>
       </View>
       {messages() === null ? (

@@ -12,6 +12,8 @@ const shapes = new Map<string, Promise<VideoShape>>();
 
 /** The shape of a video by its BV id or av number. Cached per id. */
 export function videoShape(video: BiliVideoId): Promise<VideoShape> {
+  // A series episode has no BV view to ask: it keeps the fallback shape.
+  if ("ep" in video) return Promise.resolve(FALLBACK);
   const query = "bvid" in video ? `bvid=${video.bvid}` : `aid=${video.aid}`;
   let shape = shapes.get(query);
   if (!shape) {

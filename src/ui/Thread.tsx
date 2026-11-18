@@ -1,6 +1,6 @@
 // A thread's replies, pages, quote and reply draft (`PostDetailView` of the
 // Swift app). The draft is kept per thread in the app's storage.
-import { Clipboard, createAnimatedValue, keymap, List, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef } from "nsh";
+import { Clipboard, colorScheme, createAnimatedValue, createMotion, effect, keymap, List, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef, type JSX } from "nsh";
 import { Dialog, TextView } from "nsh/base";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
@@ -14,14 +14,18 @@ import { timeAgo } from "../discuz/timeAgo";
 import { LoadingBar } from "./LoadingBar";
 import { notify } from "./toast";
 import { palette } from "./appearance";
+import { LineIcon } from "./lineIcons";
 import { openImageViewer } from "./imageViewer";
 import { titleBarShown } from "./TitleBar";
-import { BrowserIcon, BubbleIcon, LinkIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
+import { BrowserIcon, BubbleIcon, EnvelopeIcon, LinkIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
 import { ReplyCard } from "./ReplyCard";
 import { ReplyBox } from "./ReplyBox";
 import { attachmentTag, createAttachments } from "./attachments";
 import type { Attached } from "./ReplyBox";
 import { hint } from "./Hint";
+import { pauseVideos } from "./videoPause";
+import { displaySettings } from "./settings";
+import { PmComposer } from "./PmComposer";
 import { canSendReply } from "./replyGate";
 import { bilibiliRefs } from "../bilibili/links";
 import { BiliPlayer, BiliShortPlayer } from "./BiliPlayer";
@@ -47,9 +51,9 @@ const G_WAIT_MS = 1000;
 // cache is bounded: browsing many threads would otherwise keep every floor's HTML forever.
 const htmlCache = new Map<string, string>();
 // A virtualized list keeps well under 20 floors on screen at once; 160 parsed bodies
-// is plenty for re-opening a thread and recent scrolling, without holding every
+// is enough for re-opening a thread and recent scrolling, without holding every
 // floor of every thread ever visited (each body is a full HTML string).
-const HTML_CACHE_LIMIT = 160;
+const HTML_CACHE_LIMIT = 120;
 
 /** Reads a reply's parsed HTML, or parses and stores it; evicts the oldest entries past the limit. */
 function cachedBodyHtml(id: string, parse: () => string): string {
@@ -100,6 +104,49 @@ const OP_TITLE_STYLES = {
 // `signedIn` gates what needs an account: the favorite star, quoting and replying.
 // `onOpenThread` takes a press on a link to another 4d4y thread; `onBack` shows a Back control
 // (a thread opened from a link, whose title and forum come from its first page).
+// A round, translucent action disc. The thread's own actions and the jump buttons share one look,
+// so the column's bottom right reads as one cluster.
+function ActionDisc(props: { label: string; onPress: () => void; active?: boolean; children: JSX.Element }) {
+  return (
+    <View
+      onPress={props.onPress}
+      accessibilityLabel={props.label}
+      tooltip={hint(props.label)}
+      style={{
+        width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center",
+        backgroundColor: props.active
+          ? palette().selected
+          : colorScheme() === "dark" ? "rgba(22, 27, 34, 0.72)" : "rgba(255, 255, 255, 0.82)",
+        borderWidth: 1, borderColor: palette().border,
+      }}
+    >
+      {props.children}
+    </View>
+  );
+}
+
+// The thread's actions, folded under the round control: the star, the browser and the link. A short
+// upward entrance makes them rise out of it; `createMotion` rests at its end state, so a skipped
+// motion still shows them.
+function ThreadActions(props: { saved: boolean; onFavorite: () => void; onBrowser: () => void; onLink: () => void }) {
+  const entrance = createMotion({ enter: "fadeInUp" });
+  return (
+    <View style={entrance.style}>
+      <View style={{ alignItems: "center", gap: 8 }}>
+        <ActionDisc label={props.saved ? "取消收藏" : "加入收藏"} onPress={props.onFavorite}>
+          <StarIcon size={17} filled={props.saved} />
+        </ActionDisc>
+        <ActionDisc label="在浏览器中打开帖子" onPress={props.onBrowser}>
+          <BrowserIcon size={17} />
+        </ActionDisc>
+        <ActionDisc label="复制帖子链接" onPress={props.onLink}>
+          <LinkIcon size={17} />
+        </ActionDisc>
+      </View>
+    </View>
+  );
+}
+
 // `shortcutsOpen` says the Forum's shortcut list is open, which pauses these keys.
 export function Thread(props: {
   fid: string;
@@ -112,6 +159,8 @@ export function Thread(props: {
   onBack?: () => void;
   /** A right swipe in the body goes back (a thread opened from a link, or the list in portrait). */
   onSwipeBack?: () => void;
+  /** Portrait: opens the boards and thread list, which stay out of the body's way there. */
+  onOpenSidebars?: () => void;
   shortcutsOpen?: () => boolean;
   /** The floor a link opened in this thread, shown first. */
   focusPid?: string;
@@ -145,14 +194,13 @@ export function Thread(props: {
   // and returns as you scroll back to the top. Portrait keeps the bar in the normal layout.
   const scrollOffset = createAnimatedValue(0);
   const isLandscape = () => windowSize().width > windowSize().height;
+  // The bar floats over the body in both orientations and slides away on scroll, so the text takes
+  // the whole screen: 44pt where the window's title bar supplies the caption, 86 where the bar is
+  // its own (status inset, two lines and padding).
   const titleShift = () =>
-    isLandscape()
-      ? scrollOffset.interpolate({ inputRange: [0, 80], outputRange: [0, -TITLE_H], extrapolate: "clamp" })
-      : 0;
+    scrollOffset.interpolate({ inputRange: [0, 80], outputRange: [0, -(isLandscape() ? TITLE_H : 86)], extrapolate: "clamp" });
   const titleOpacity = () =>
-    isLandscape()
-      ? scrollOffset.interpolate({ inputRange: [0, 80], outputRange: [1, 0], extrapolate: "clamp" })
-      : 1;
+    scrollOffset.interpolate({ inputRange: [0, 80], outputRange: [1, 0], extrapolate: "clamp" });
 
   // A right swipe in the body goes back. `panActivation` fails the gesture on a small vertical move
   // (so the list still scrolls and small gestures do not trigger it); only a clear, long rightward
@@ -163,9 +211,19 @@ export function Thread(props: {
   const onSwipeEnd = (e: any) => {
     const dx = e?.translation?.x ?? 0;
     const vx = e?.velocity?.x ?? 0;
-    if (!e?.cancelled && (dx > 150 || vx > 1700)) props.onSwipeBack?.();
+    // The default-level gesture: a short rightward drag (or a light flick) is enough. The old
+    // 150 pt / 1700 pt/s pair made the back action feel like it needed a deliberate haul.
+    if (!e?.cancelled && (dx > 60 || vx > 700)) props.onSwipeBack?.();
     backPan.set(0);
   };
+
+  // Opening a thread used to replace the column's content in a single frame. An opacity-only
+  // entrance (no layout change, so the list never re-measures) makes the switch read as a
+  // transition. `createMotion()` rests at opacity 1, so a skipped motion still shows the thread.
+  const entrance = createMotion();
+  effect(() => {
+    void entrance.play("fadeIn", { duration: 180 });
+  });
 
   // (The HTML transform cache is module-level, declared above the component, so it survives
   // remounts and makes re-rendering rows and re-opening a thread instant.)
@@ -185,12 +243,35 @@ export function Thread(props: {
 
   let loadingMore = false;
   const loadingMoreShown = signal(false);
+  // The thread's last page, as its pager reports it. `undefined` on a page with no pager.
+  const lastPage = signal<number | undefined>(undefined);
+  // A jump to the last page is one request; a second press waits for it.
+  const jumping = signal(false);
+  // The thread's actions (favorite, browser, link) folded under the round control at the bottom right.
+  const toolboxOpen = signal(false);
+  // A press on a floor's avatar: first a "短信息" button, then the message sheet.
+  const pmTarget = signal<{ id: string; name: string } | null>(null);
+  const pmWriting = signal(false);
+
+  // A scroll pauses a video playing in the thread, so it never plays on off screen. Throttled:
+  // the pause reaches the page at most a few times a second while the finger keeps moving.
+  let lastVideoPause = 0;
+  function onThreadScroll(e?: { offset?: { y?: number }; contentSize?: { height?: number }; size?: { height?: number } }): void {
+    // The next page starts before the end of the thread is reached (the viewport is `size`).
+    const rest = (e?.contentSize?.height ?? 0) - ((e?.offset?.y ?? 0) + (e?.size?.height ?? 0));
+    if (rest < 1500) void loadMore();
+    const now = Date.now();
+    if (now - lastVideoPause < 200) return;
+    lastVideoPause = now;
+    pauseVideos();
+  }
 
   function fetchPage(n: number) {
     return loadReplyPage(props.post.id, n)
-      .then(({ title: pageTitle, fid: pageFid, replies: list }) => {
+      .then(({ title: pageTitle, fid: pageFid, lastPage: pageLast, replies: list }) => {
         if (n === 1 && pageTitle) title.set(pageTitle);
         if (pageFid && !fid()) fid.set(pageFid);
+        if (pageLast !== undefined) lastPage.set(pageLast);
         const merged = n === 1 ? { items: list, more: list.length > 0 } : mergePage(replies(), list);
         replies.set(merged.items);
         more.set(merged.more);
@@ -234,6 +315,33 @@ export function Thread(props: {
     loadingMore = true;
     loadingMoreShown.set(true);
     fetchPage(page() + 1);
+  }
+
+  // One press to the first floor: the first page is always the list's start, so this is a scroll.
+  function toFirstFloor() {
+    repliesList?.scrollToOffset({ offset: 0, animated: true });
+  }
+
+  // One press to the last floor: still on an earlier page, ask for the thread's last page and
+  // append it, then scroll to its end. The pages in between are not fetched (a long thread would
+  // otherwise make this wait for dozens of requests); a pull-to-refresh starts the thread over.
+  async function toLastFloor() {
+    if (jumping()) return;
+    const last = lastPage();
+    if (last !== undefined && last > page()) {
+      jumping.set(true);
+      try {
+        await fetchPage(last);
+        // The last page is the end: no further "load more" past it.
+        more.set(false);
+      } finally {
+        jumping.set(false);
+      }
+      // The rows need a layout pass before the list can scroll to its new end.
+      setTimeout(() => repliesList?.scrollToEnd({ animated: true }), 120);
+    } else {
+      repliesList?.scrollToEnd({ animated: true });
+    }
   }
 
   async function setDraft(text: string) {
@@ -495,18 +603,18 @@ export function Thread(props: {
   return (
     <View
       pan={props.onSwipeBack ? { x: backPan } : undefined}
-      panActivation={props.onSwipeBack ? { activeOffsetX: 48, failOffsetY: 12 } : undefined}
+      panActivation={props.onSwipeBack ? { activeOffsetX: 18, failOffsetY: 10 } : undefined}
       onPanEnd={props.onSwipeBack ? onSwipeEnd : undefined}
-      style={{ flex: 1, alignSelf: "stretch", overflow: "hidden" }}
+      style={{ flex: 1, alignSelf: "stretch", overflow: "hidden", opacity: entrance.opacity }}
     >
       {/* Under the title bar the title sits in the bar's caption area (the column extends up into it), centred
           on the bar's 44pt; it drags the window where nothing presses. With no bar, it keeps the top inset. */}
       <View
         desktop={{ windowDrag: true }}
         style={{
-          // Landscape: float the bar over the body (so the body keeps the full height) so it can
-          // slide away on scroll and let the text take its place. Portrait: a normal bar above.
-          ...(isLandscape() ? { position: "absolute", left: 0, right: 0, top: 0, zIndex: 10 } : {}),
+          // The bar floats over the body in both orientations, so it can slide away on scroll and
+          // let the text take its place.
+          position: "absolute", left: 0, right: 0, top: 0, zIndex: 10,
           height: isLandscape() ? TITLE_H : undefined,
           flexDirection: "row",
           alignItems: "center",
@@ -514,72 +622,46 @@ export function Thread(props: {
           paddingHorizontal: 12,
           paddingVertical: isLandscape() ? 0 : 8,
           paddingTop: isLandscape() ? 0 : titleBarShown() ? 18 : 20,
+          // Two lines of a long title need the room; the title itself is drawn over the row.
+          minHeight: isLandscape() ? TITLE_H : 58,
           backgroundColor: palette().bg,
           transform: [{ translateY: titleShift() }],
           opacity: titleOpacity(),
           overflow: "hidden",
         }}
       >
+        {/* Portrait: the two list columns are hidden, so this opens them as an overlay. */}
+        {props.onOpenSidebars ? (
+          <View
+            onPress={props.onOpenSidebars}
+            accessibilityLabel="版块与帖子列表"
+            tooltip={hint("版块与帖子列表")}
+            style={{ width: 30, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 6 }}
+          >
+            <LineIcon name="grip" size={17} />
+          </View>
+        ) : null}
         {/* Back sits in the row, first, so the icons after it move right with it. */}
         {props.onBack ? (
           <View onPress={props.onBack} accessibilityLabel="返回" style={{ paddingVertical: 4, paddingHorizontal: 6 }}>
             <Text style={{ fontSize: 13, color: palette().muted }}>{"‹ 返回"}</Text>
           </View>
         ) : null}
-        {/* The icons sit at the left, bottom-aligned with the title: the favorite star, and the thread's
-            browser icon, which opens the thread in the system browser. */}
-        {/* Three equal 32dp boxes with one gap: the icons are centred and evenly
-            spaced however wide their own glyphs are. */}
-        <View style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-end", gap: 4, flexShrink: 0 }}>
-          <View
-            onPress={props.signedIn ? toggleFavorite : () => props.onSignInNeeded?.()}
-            accessibilityLabel={!props.signedIn ? "登录后收藏" : saved() ? "取消收藏" : "加入收藏"}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6 }}
-          >
-            {saved() ? <StarIcon size={17} filled={true} /> : <StarIcon size={17} />}
-          </View>
-          <View
-            onPress={() => void openLink(threadUrl())}
-            accessibilityLabel="在浏览器中打开帖子"
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6 }}
-          >
-            <BrowserIcon size={17} />
-          </View>
-          <View
-            onPress={() => {
-              Clipboard.writeText(threadUrl());
-              notify("copy-link", "链接已复制。");
-            }}
-            accessibilityLabel="复制帖子链接"
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6 }}
-          >
-            <LinkIcon size={17} />
-          </View>
-        </View>
-        {/* The title is centred in the space right of the icons; a long one is cut off at the icons' edge,
-            and fades out over its first stretch there. */}
-        <View style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-          <Text style={{ numberOfLines: 1, textAlign: "center", fontSize: 17, fontWeight: 600, color: palette().text }}>{title()}</Text>
-          <View
-            style={{
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: 0,
-              width: 36,
-              backgroundImage: `linear-gradient(to right, ${palette().bg}, transparent)`,
-            }}
-          />
+        {/* The title is centred on the whole bar (a short one sits in the middle), and a long one
+            wraps to a second line that starts at the first line's left edge. */}
+        <View style={{ position: "absolute", left: 126, right: 12, top: 0, bottom: 0, justifyContent: "center", pointerEvents: "none" }}>
+          <Text style={{ numberOfLines: 2, textAlign: "left", fontSize: 15, lineHeight: 19, fontWeight: 600, color: palette().text }}>{title()}</Text>
         </View>
       </View>
       {/* A virtualized list: only the replies near the viewport exist, and their views are
           reused as the user scrolls. Each row reads its reply through `item()`. */}
       <List
         style={{ flex: 1 }}
-        contentStyle={{ padding: 12, gap: 12, paddingTop: isLandscape() ? TITLE_H + 4 : 12 }}
+        contentStyle={{ padding: 12, gap: 12, paddingTop: isLandscape() ? TITLE_H + 4 : 90 }}
         each={replies()}
-        estimatedItemSize={180}
+        estimatedItemSize={320}
         scrollValue={scrollOffset}
+        onScroll={onThreadScroll}
         onLoadMore={loadMore}
         refreshing={refreshingThread()}
         onRefresh={() => refreshThread()}
@@ -593,6 +675,7 @@ export function Thread(props: {
             avatar={item().author.avatar ? absoluteUrl(item().author.avatar!, HOST) : undefined}
             name={item().author.name}
             isOp={opId() !== undefined && item().author.id === opId()}
+            onAvatarPress={item().author.id ? () => { pmWriting.set(false); pmTarget.set({ id: item().author.id!, name: item().author.name }); } : undefined}
             meta={`#${item().seq} · ${timeAgo(item().at)}`}
             highlighted={() => hovered() === item().seq}
             onHoverIn={() => hovered.set(item().seq)}
@@ -629,7 +712,11 @@ export function Thread(props: {
                 <TextView
                   html={bodyHtml(item())}
                   selectable={true}
-                  styles={item().seq === 1 ? { ...OP_TITLE_STYLES, ...LINE_STYLES } : LINE_STYLES}
+                  styles={{
+                    root: { fontSize: displaySettings().body, lineHeight: Math.round(displaySettings().body * displaySettings().spacing) },
+                    ...LINE_STYLES,
+                    ...(item().seq === 1 ? OP_TITLE_STYLES : {}),
+                  }}
                   classes={{ root: "selection:bg-blue-500" }}
                   extensions={DISCUZ_EXTENSIONS}
                   renderCustom={renderDiscuzNode}
@@ -691,6 +778,31 @@ export function Thread(props: {
           </View>
         </View>
       ) : null}
+      {/* A press on an avatar offers a private message; the sheet writes it. */}
+      {pmTarget() && !pmWriting() ? (
+        <View
+          onPress={() => pmTarget.set(null)}
+          style={{ position: "absolute", left: 0, top: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0, 0, 0, 0.28)", zIndex: 44 }}
+        >
+          <View
+            onPress={() => pmWriting.set(true)}
+            accessibilityLabel={`给 ${pmTarget()!.name} 发短信息`}
+            style={{ paddingVertical: 10, paddingHorizontal: 18, borderRadius: 10, borderWidth: 1, borderColor: "rgba(255, 255, 255, 0.25)", backgroundColor: "rgba(20, 22, 26, 0.82)" }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <EnvelopeIcon size={14} />
+              <Text style={{ fontSize: 13, color: "#ffffff" }}>短消息</Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
+      {pmWriting() && pmTarget() ? (
+        <PmComposer
+          uid={pmTarget()!.id}
+          name={pmTarget()!.name}
+          onClose={() => { pmWriting.set(false); pmTarget.set(null); }}
+        />
+      ) : null}
       {failedPage() !== null ? (
         <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, alignItems: "center", justifyContent: "center" }}>
           <View style={{ alignItems: "center", padding: 16, gap: 8 }}>
@@ -705,6 +817,59 @@ export function Thread(props: {
           </View>
         </View>
       ) : null}
+      {/* The bottom-right cluster, clear of the reply box: the thread's actions folded under a round
+          control, then the two jump buttons. The action discs rise out above the control (absolutely
+          positioned, so the jump buttons never move). A press anywhere else folds them away. */}
+      {toolboxOpen() ? (
+        <View
+          onPress={() => toolboxOpen.set(false)}
+          accessibilityLabel="收起帖子操作"
+          style={{ position: "absolute", left: 0, top: 0, right: 0, bottom: 0, zIndex: 19 }}
+        />
+      ) : null}
+      <View style={{ position: "absolute", right: 14, bottom: 104, alignItems: "center", gap: 8, zIndex: 20 }}>
+          {toolboxOpen() ? (
+            <View style={{ position: "absolute", right: 0, bottom: replies().length > 0 ? 136 : 48, alignItems: "center" }}>
+              <ThreadActions
+                saved={saved()}
+                onFavorite={() => {
+                  toolboxOpen.set(false);
+                  if (props.signedIn) toggleFavorite();
+                  else props.onSignInNeeded?.();
+                }}
+                onBrowser={() => {
+                  toolboxOpen.set(false);
+                  void openLink(threadUrl());
+                }}
+                onLink={() => {
+                  toolboxOpen.set(false);
+                  Clipboard.writeText(threadUrl());
+                  notify("copy-link", "链接已复制。");
+                }}
+              />
+            </View>
+          ) : null}
+          <ActionDisc
+            label={toolboxOpen() ? "收起帖子操作" : "帖子操作"}
+            active={toolboxOpen()}
+            onPress={() => toolboxOpen.set(!toolboxOpen())}
+          >
+            <LineIcon name="grip" size={18} />
+          </ActionDisc>
+          {/* Jump buttons only once there are floors to jump between. */}
+          {replies().length > 0 ? (
+            <>
+              <ActionDisc label="回到第一楼" onPress={toFirstFloor}>
+                <LineIcon name="chevronUp" size={18} />
+              </ActionDisc>
+              <View style={{ opacity: jumping() ? 0.5 : 1 }}>
+                <ActionDisc label="跳到最后一楼" onPress={jumping() ? () => undefined : () => void toLastFloor()}>
+                  <LineIcon name="chevronDown" size={18} />
+                </ActionDisc>
+              </View>
+            </>
+          ) : null}
+        </View>
       {/* The reply box is always visible, as on the desktop. Signed out, sending
         a reply opens the sign-in sheet instead of silently doing nothing. */}
       <View style={{ alignSelf: "stretch" }}>

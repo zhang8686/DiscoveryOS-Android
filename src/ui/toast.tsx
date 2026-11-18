@@ -1,4 +1,4 @@
-// Every message the app shows that comes and goes on its own, at the window's top-right:
+// Every message the app shows that comes and goes on its own, at the top right under the status bar:
 // "Reply posted", "Couldn't load threads", "Offline: the saved login is kept". A message with the same id replaces the one
 // showing, rather than stacking a copy. A message with a tap action (a failed load's retry)
 // runs the action when tapped and hides itself.
@@ -74,7 +74,7 @@ function ToastItem(props: { text: string; onPress?: () => void }) {
 /** The toasts, in the window's top-right corner, below the title bar when there is one. Place it in a view that fills the window. */
 export function Toaster() {
   return (
-    <View style={{ position: "absolute", top: titleBarShown() ? 56 : 12, right: 12, alignItems: "flex-end", gap: 6 }}>
+    <View style={{ position: "absolute", top: 88, right: 12, alignItems: "flex-end", gap: 6 }}>
       <Each of={shown()} key={(e: ToastEntry) => e.id}>
         {(entry) => <ToastItem text={String(entry().value)} onPress={actions.has(entry().id) ? () => tap(entry().id) : undefined} />}
       </Each>

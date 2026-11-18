@@ -229,3 +229,59 @@ export function PlaneIcon(props: { size: number; enabled: () => boolean }) {
     />
   );
 }
+
+/** A gear, drawn in the muted colour: the settings entry. */
+export function GearIcon(props: { size: number }) {
+  return (
+    <Canvas
+      style={{ width: props.size, height: props.size }}
+      draw={(cx) => {
+        const s = props.size;
+        const c = s / 2;
+        cx.strokeStyle = palette().muted;
+        cx.lineWidth = Math.max(1.2, s * 0.09);
+        cx.beginPath();
+        cx.arc(c, c, s * 0.29, 0, Math.PI * 2);
+        cx.stroke();
+        // Eight teeth around the ring.
+        for (let i = 0; i < 8; i++) {
+          const a = (i * Math.PI) / 4;
+          cx.beginPath();
+          cx.moveTo(c + Math.cos(a) * s * 0.29, c + Math.sin(a) * s * 0.29);
+          cx.lineTo(c + Math.cos(a) * s * 0.45, c + Math.sin(a) * s * 0.45);
+          cx.stroke();
+        }
+        cx.beginPath();
+        cx.arc(c, c, s * 0.1, 0, Math.PI * 2);
+        cx.stroke();
+      }}
+    />
+  );
+}
+
+/** A closed envelope, drawn in white: the private-message button's glyph. */
+export function EnvelopeIcon(props: { size: number }) {
+  return (
+    <Canvas
+      style={{ width: props.size, height: props.size }}
+      draw={(cx) => {
+        const s = props.size;
+        cx.strokeStyle = "#ffffff";
+        cx.lineWidth = Math.max(1.1, s * 0.09);
+        const x = s * 0.08;
+        const y = s * 0.22;
+        const w = s * 0.84;
+        const h = s * 0.56;
+        cx.beginPath();
+        cx.roundRect(x, y, w, h, Math.max(1, s * 0.08));
+        cx.stroke();
+        // The flap: two lines from the top corners to the middle.
+        cx.beginPath();
+        cx.moveTo(x, y);
+        cx.lineTo(x + w / 2, y + h * 0.6);
+        cx.lineTo(x + w, y);
+        cx.stroke();
+      }}
+    />
+  );
+}

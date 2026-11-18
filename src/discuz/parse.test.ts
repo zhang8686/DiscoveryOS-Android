@@ -1,5 +1,5 @@
 import { expect, test } from "nsh/test";
-import { htmlToText, parsePmConversation, parsePmUsers, absolutize, floorFromLink, captureGroups, htmlDecode, parseBookmarks, parseChannels, parseMyReplies, parseMyThreads, unescapeNumericEntities, parsePosts, parseProfile, parseReplies, parseSearchResults, parseUser, mergePage, fixImages, removePercentEncoding, trimLeadingBlanks, threadIdFromLink, parseThreadPageInfo } from "./parse";
+import { htmlToText, parsePmConversation, parsePmUsers, absolutize, floorFromLink, captureGroups, htmlDecode, parseBookmarks, parseChannels, parseMyReplies, parseMyThreads, unescapeNumericEntities, parsePosts, parseProfile, parseReplies, parseSearchResults, parseUser, mergePage, fixImages, removePercentEncoding, trimLeadingBlanks, threadIdFromLink, parseThreadPageInfo, parseLastPage } from "./parse";
 
 test("captureGroups returns one match's groups, or every whole match", () => {
   expect(captureGroups("a1b", "a(\\d)b", true)).toEqual(["1"]);
@@ -399,6 +399,15 @@ test("reads a thread page's title and forum", () => {
   expect(
     parseThreadPageInfo('<title>家里的工具更加齐全了 - Discovery - 4D4Y</title><a href="forumdisplay.php?fid=2">Discovery</a>'),
   ).toEqual({ title: "家里的工具更加齐全了", fid: "2" });
+});
+
+test("reads a thread's last page from its pager", () => {
+  // Discuz's pager prints 当前页/总页数 in `<em id="page">`.
+  expect(parseThreadPageInfo('<em id="page">2/9</em>')).toEqual({ title: undefined, fid: undefined, lastPage: 9 });
+  // Without that element, the largest `page=` the pager links ask for is the last page.
+  expect(parseLastPage('<a href="viewthread.php?tid=1&amp;page=4">4</a><a href="viewthread.php?tid=1&amp;page=2">2</a>')).toBe(4);
+  // A one-page thread carries no pager: the jump control just scrolls to the end.
+  expect(parseLastPage("<p>没有分页</p>")).toBeUndefined();
 });
 
 test("quoting keeps the words and drops the markup's line breaks and indentation", () => {

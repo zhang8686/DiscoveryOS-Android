@@ -2,7 +2,7 @@
 // original is what Save writes. Pinch to zoom, and the picture sits centred in
 // what the top bar leaves. The bar's Save button saves it; a tap on the bar's
 // Close button, or on the black around the picture, closes the viewer.
-import { createMotion, effect, Image, Scroll, signal, Text, View, windowSize } from "nsh";
+import { createAnimatedValue, createMotion, effect, Image, Scroll, signal, Text, View, windowSize } from "nsh";
 import process from "process";
 import { fetchAttachment } from "../discuz/attachments";
 import { saveToDownloads } from "./downloads";
@@ -41,7 +41,7 @@ function ToolButton(props: { label: string; onPress: () => void }) {
   return (
     <View
       onPress={props.onPress}
-      style={{ minHeight: 36, minWidth: 52, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: "#2b2e35" }}
+      style={{ minHeight: 36, minWidth: 56, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: "rgba(18, 20, 24, 0.45)", borderWidth: 1, borderColor: "rgba(255, 255, 255, 0.24)" }}
     >
       <Text style={{ fontSize: 13, color: "#ffffff" }}>{props.label}</Text>
     </View>
@@ -83,11 +83,14 @@ export function ImageViewer() {
   // skipped (reduced motion, or a platform that cannot play it) the viewer is
   // still fully visible — never stuck transparent.
   const entrance = createMotion();
+  // A downward drag on the picture closes the viewer: the thumb's natural "push it away".
+  const dismissPan = createAnimatedValue(0);
   effect(() => {
     if (viewerImage()) void entrance.play("fadeIn", { duration: 200 });
   });
   return viewerImage() ? (
     <View
+      onPress={() => viewerImage.set(null)}
       style={{
         position: "absolute", left: 0, top: 0, right: 0, bottom: 0,
         backgroundColor: "#101114", alignItems: "stretch", justifyContent: "flex-start",
@@ -96,10 +99,8 @@ export function ImageViewer() {
     >
       {/* The status bar is drawn over the top of the window here, so the bar's own
           buttons need room under it or the system takes their taps. */}
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, paddingTop: 26, paddingBottom: 8, backgroundColor: "#1b1d22", flexWrap: "wrap" }}>
-        <ToolButton label="关闭" onPress={() => viewerImage.set(null)} />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8, backgroundColor: "#1b1d22", flexWrap: "wrap" }}>
         <Text style={{ flex: 1, fontSize: 12, color: "#e8eaed", numberOfLines: 1 }}>{viewerImage()!.name}</Text>
-        <ToolButton label="保存" onPress={() => void savePicture(viewerImage()!.url, viewerImage()!.name)} />
       </View>
       {/* The picture is centred in a zoomable scroll: two fingers pinch it 1×–4×.
           `objectFit: "contain"` is a style key (not a prop) that fits the whole
@@ -110,14 +111,37 @@ export function ImageViewer() {
         maximumZoomScale={4}
         zoomable={true}
         centerContent={true}
-        contentStyle={{ alignItems: "center", justifyContent: "center", padding: 12 }}
+        contentStyle={{ alignItems: "center", justifyContent: "center" }}
       >
-        <Image
-          src={viewerImage()!.display}
-          fadeDuration={160}
-          style={{ width: availW, height: availH, objectFit: "contain", borderRadius: 6 }}
-        />
+        {/* The black around the picture closes the viewer; the picture itself takes the press, so
+            a tap on it (or a pinch) never closes it by accident. The inner box fills the viewport,
+            since a scroll view's empty margins are not part of its content. */}
+        <View
+          onPress={() => viewerImage.set(null)}
+          pan={{ y: dismissPan }}
+          panActivation={{ activeOffsetY: 28, failOffsetX: 40 }}
+          onPanEnd={(e: any) => {
+            if (!e?.cancelled && (e?.translation?.y ?? 0) > 90) viewerImage.set(null);
+            else dismissPan.set(0);
+          }}
+          style={{ width: win.width, height: win.height, alignItems: "center", justifyContent: "center" }}
+        >
+          <View onPress={() => undefined} style={{ width: availW, height: availH }}>
+            <Image
+              src={viewerImage()!.display}
+              fadeDuration={160}
+              style={{ width: availW, height: availH, objectFit: "contain", borderRadius: 6 }}
+            />
+          </View>
+        </View>
       </Scroll>
+      {/* Close at the bottom left, Save at the bottom right, within thumb reach, with no bar. */}
+      <View style={{ position: "absolute", left: 16, bottom: 28, zIndex: 20 }}>
+        <ToolButton label="关闭" onPress={() => viewerImage.set(null)} />
+      </View>
+      <View style={{ position: "absolute", right: 16, bottom: 28, zIndex: 20 }}>
+        <ToolButton label="保存" onPress={() => void savePicture(viewerImage()!.url, viewerImage()!.name)} />
+      </View>
     </View>
   ) : null;
 }

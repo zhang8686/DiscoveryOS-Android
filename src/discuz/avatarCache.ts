@@ -6,6 +6,7 @@
 import { Storage } from "nsh";
 import { loadUser } from "./forum";
 import { absoluteUrl, HOST_BASE } from "./parse";
+import { avatarUrlForUid } from "./avatarUrl";
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -32,7 +33,9 @@ export function userAvatar(name: string): Promise<string | undefined> {
     const cached = await readEntry<Entry>(userKey(name));
     if (cached && fresh(cached, TTL_MS)) return cached.avatar ? absoluteUrl(cached.avatar, HOST_BASE) : undefined;
     const user = await loadUser(name);
-    const avatar = user?.avatar ?? "";
+    // The profile's avatar element can be missing while its uid is there; the uid alone builds
+    // the same picture URL, so a row does not fall back to a grey square in that case.
+    const avatar = user?.avatar || avatarUrlForUid(user?.id) || "";
     await Storage.setItem(userKey(name), JSON.stringify({ avatar, at: Date.now() } satisfies Entry)).catch(() => undefined);
     return avatar ? absoluteUrl(avatar, HOST_BASE) : undefined;
   });

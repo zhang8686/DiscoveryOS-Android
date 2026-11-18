@@ -1,6 +1,6 @@
-import { createAnimatedValue, Image, keyboardFrame, mount, Overlay, signal, Text, View, type JSX, type ViewRef } from "nsh";
+import { createAnimatedValue, effect, Image, keyboardFrame, mount, Overlay, Scroll, signal, Storage, Text, untracked, View, windowSize, type JSX, type ViewRef } from "nsh";
 import { Input } from "nsh/base";
-import { currentUser, login, logout, restoreSession } from "./src/discuz/client";
+import { currentUser, loadLoginQuestions, login, logout, restoreSession } from "./src/discuz/client";
 import { loadProfile } from "./src/discuz/forum";
 import type { Profile } from "./src/discuz/parse";
 import { clearCredentials, loadCredentials, saveCredentials } from "./src/discuz/credentials";
@@ -12,6 +12,9 @@ import { notify, Toaster } from "./src/ui/toast";
 import { DownloadIcon, ThemeIcon } from "./src/ui/icons";
 import { hint } from "./src/ui/Hint";
 import { hideSystemTitleBar } from "./src/ui/TitleBar";
+import { SettingsSheet } from "./src/ui/SettingsSheet";
+import { GearIcon } from "./src/ui/icons";
+import { textFieldFocused } from "./src/ui/keyboard";
 import { availableUpdate, installUpdate, startUpdateCheck } from "./src/update";
 import { updateTitle } from "./src/updateManifest";
 import { appearanceMode, appearanceName, cycleAppearance, palette, restoreAppearance, type AppearanceMode } from "./src/ui/appearance";
@@ -75,6 +78,18 @@ function IconButton(props: { icon: JSX.Element; title: string; disabled?: boolea
   );
 }
 
+// Discuz's usual security questions, used until the login page's own list arrives.
+const DEFAULT_LOGIN_QUESTIONS = [
+  { id: 0, text: "安全提问（未设置请忽略）" },
+  { id: 1, text: "母亲的名字" },
+  { id: 2, text: "爷爷的名字" },
+  { id: 3, text: "父亲出生的城市" },
+  { id: 4, text: "您其中一位老师的名字" },
+  { id: 5, text: "您个人计算机的型号" },
+  { id: 6, text: "您最喜欢的餐馆名称" },
+  { id: 7, text: "驾驶执照最后四位数字" },
+];
+
 // The account menu's profile rows, in order: the label, and the field it shows.
 const MENU_ROWS: [string, keyof Profile][] = [
   ["用户组", "group"],
@@ -135,6 +150,10 @@ function MenuAction(props: { label: string; onPress: () => void }) {
   );
 }
 
+let imeSeen = false;
+// The window height without a keyboard: a phone resizes the window, and the difference is the inset.
+let baseWindowHeight = 0;
+
 function App() {
   // Nothing touches the network until the saved cookies are back in memory.
   const ready = signal(false);
@@ -142,6 +161,11 @@ function App() {
   const name = signal("");
   const pass = signal("");
   const busy = signal(false);
+  // The security question a member may have set: 0 is none (Discuz's "未设置请忽略").
+  const questionId = signal(0);
+  const answer = signal("");
+  const questionsOpen = signal(false);
+  const questions = signal(DEFAULT_LOGIN_QUESTIONS);
   const avatar = signal<string | null>(null);
   // The sign-in dialog, opened from the blank avatar while signed out.
   const dialogOpen = signal(false);
@@ -153,6 +177,8 @@ function App() {
   const avatarNode = signal<ViewRef | null>(null);
   // The sign-out confirmation, opened from the menu's Sign Out.
   const confirmOpen = signal(false);
+  // The display settings panel, opened from the gear between the account and the theme.
+  const settingsOpen = signal(false);
 
   function refreshProfile(name: string) {
     loadProfile(name)
@@ -169,6 +195,8 @@ function App() {
 
   function showProfile(name: string) {
     user.set(name);
+    // Remembered so the next launch shows the account at once, without waiting for the forum.
+    Storage.setItem("visual:lastUser", name).catch(() => undefined);
     refreshProfile(name);
   }
 
@@ -184,11 +212,12 @@ function App() {
   async function signIn() {
     busy.set(true);
     try {
-      const ok = await login(name(), pass());
+      const ok = await login(name(), pass(), questionId(), answer());
       if (ok) {
         saveCredentials({ name: name(), pass: pass() });
         showProfile(name());
         pass.set("");
+        answer.set("");
         dialogOpen.set(false);
       } else {
         notify("sign-in", "登录失败。");
@@ -212,6 +241,7 @@ function App() {
     profile.set(null);
     menuOpen.set(false);
     user.set(null);
+    Storage.removeItem("visual:lastUser").catch(() => undefined);
     name.set("");
     pass.set("");
     busy.set(false);
@@ -244,10 +274,15 @@ function App() {
   // Debug: an import of cookies signs in with them at once.
   setOnCookiesImported(restoreLogin);
 
-  // 先恢复持久化的会话 Cookie，再尝试免密恢复登录；首屏不弹登录框。
+  // The window opens at once: the vault (an encrypted cookie store) is read in the background and
+  // the session restored after it, instead of holding the first screen until the forum answers.
+  ready.set(true);
+  // The last account shows in the corner at once; the session check follows and corrects it.
+  Storage.getItem("visual:lastUser")
+    .then((saved: string | null) => { if (saved && !user()) user.set(saved); })
+    .catch(() => undefined);
   void initVault().then(() => {
     reloadCookies();
-    ready.set(true);
     if (hasSavedCookies()) restoreLogin();
   });
 
@@ -371,10 +406,26 @@ function App() {
             onPress={applyUpdate}
           />
         ) : null}
+        <IconButton
+          icon={<GearIcon size={17} />}
+          title="显示设置"
+          onPress={() => settingsOpen.set(true)}
+        />
         <IconButton icon={<ThemeIcon size={16} mode={appearanceMode} />} title={`Theme: ${appearanceName(appearanceMode())}`} onPress={cycleAppearance} />
       </View>
     </View>
   );
+
+  // The forum's login page names the security questions it accepts; its list replaces the
+  // client's default one when it loads. A failure keeps the default list.
+  effect(() => {
+    if (!dialogOpen()) return;
+    untracked(() => {
+      void loadLoginQuestions().then((list) => {
+        if (list.length > 0) questions.set(list);
+      }).catch(() => undefined);
+    });
+  });
 
   // The sign-in dialog: a panel over the forum, with Cancel and Sign in.
   const signInDialog: JSX.Element = (
@@ -392,7 +443,7 @@ function App() {
     >
       <View
         style={{
-          width: 280,
+          width: Math.min(320, windowSize().width - 40),
           padding: 16,
           gap: 10,
           borderRadius: 12,
@@ -406,7 +457,7 @@ function App() {
           placeholder="用户名"
           value={name()}
           onChange={({ value: text }: { value: string }) => name.set(text)}
-          style={{ height: 28, paddingHorizontal: 8, fontSize: 14 }}
+          style={{ height: 36, paddingHorizontal: 10, fontSize: 14, color: palette().text, placeholderColor: palette().muted, caretColor: palette().link, borderRadius: 8, borderWidth: 1, borderColor: palette().border, backgroundColor: palette().bg }}
         />
         <Input
           placeholder="密码"
@@ -417,8 +468,49 @@ function App() {
           onSubmit={() => {
             if (!busy() && name().length > 0 && pass().length > 0) void signIn();
           }}
-          style={{ height: 28, paddingHorizontal: 8, fontSize: 14 }}
+          style={{ height: 36, paddingHorizontal: 10, fontSize: 14, color: palette().text, placeholderColor: palette().muted, caretColor: palette().link, borderRadius: 8, borderWidth: 1, borderColor: palette().border, backgroundColor: palette().bg }}
         />
+        {/* A member who set a security question answers it here; id 0 posts none. */}
+        <View
+          onPress={() => questionsOpen.set(!questionsOpen())}
+          accessibilityLabel="安全提问"
+          style={{
+            height: 30, paddingHorizontal: 8, borderRadius: 6, borderWidth: 1,
+            borderColor: palette().border, backgroundColor: palette().bg,
+            flexDirection: "row", alignItems: "center", gap: 6,
+          }}
+        >
+          <Text style={{ fontSize: 13, color: questionId() === 0 ? palette().muted : palette().text, flex: 1, numberOfLines: 1 }}>
+            {questions().find((q) => q.id === questionId())?.text ?? "安全提问（未设置请忽略）"}
+          </Text>
+          <Text style={{ fontSize: 11, color: palette().muted }}>▾</Text>
+        </View>
+        {questionsOpen() ? (
+          <Scroll style={{ maxHeight: 168 }} contentStyle={{ gap: 1 }}>
+            <View style={{ borderRadius: 6, borderWidth: 1, borderColor: palette().border, overflow: "hidden" }}>
+              {questions().map((q) => (
+                <View
+                  onPress={() => {
+                    questionId.set(q.id);
+                    if (q.id === 0) answer.set("");
+                    questionsOpen.set(false);
+                  }}
+                  style={{ paddingVertical: 7, paddingHorizontal: 8, backgroundColor: q.id === questionId() ? palette().selected : palette().bg }}
+                >
+                  <Text style={{ fontSize: 12.5, color: palette().text }}>{q.text}</Text>
+                </View>
+              ))}
+            </View>
+          </Scroll>
+        ) : null}
+        {questionId() > 0 ? (
+          <Input
+            placeholder="安全提问的答案"
+            value={answer()}
+            onChange={({ value: text }: { value: string }) => answer.set(text)}
+            style={{ height: 36, paddingHorizontal: 10, fontSize: 14, color: palette().text, placeholderColor: palette().muted, caretColor: palette().link, borderRadius: 8, borderWidth: 1, borderColor: palette().border, backgroundColor: palette().bg }}
+          />
+        ) : null}
         <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
           <Button label="取消" secondary={true} onPress={() => dialogOpen.set(false)} />
           <Button
@@ -480,6 +572,24 @@ function App() {
   // rows stop responding and taps feel "off" (only the control's non-text area still fires).
   // Selection is therefore scoped off the root; if copy is wanted later, mark the specific
   // read-only text blocks `selectable` instead of the whole window.
+  // Keep the content above the keyboard. A tablet reports the IME's height; a phone's window spans
+  // the screen, where that height can come back as 0 (or a sliver) while the keyboard is up, so a
+  // focused field falls back to a keyboard's usual height instead of leaving the reply box under it.
+  const keyboardBottom = () => {
+    const ime = keyboardFrame().height;
+    if (ime > 80) { imeSeen = true; return ime; }
+    // The keyboard was reported before and is now closed: no inset, even if the field kept its
+    // focus (the phone's back key closes the keyboard without a blur).
+    if (imeSeen) return 0;
+    const h = windowSize().height;
+    if (h > baseWindowHeight) baseWindowHeight = h;
+    const shrink = baseWindowHeight - h;
+    // A phone's window shrinks under the keyboard: the inset is the shrink. Once the keyboard is
+    // gone the window is back to its height and the bar drops, even if the field kept its focus.
+    if (textFieldFocused()) return shrink > 120 ? Math.min(shrink, 360) : 0;
+    return 0;
+  };
+
   return (
     <View
       style={{
@@ -493,7 +603,7 @@ function App() {
         backgroundColor: palette().bg,
       }}
     >
-      <View style={{ flex: 1, alignSelf: "stretch", paddingBottom: keyboardFrame().height }}>
+      <View style={{ flex: 1, alignSelf: "stretch", paddingBottom: keyboardBottom() }}>
         {ready() ? (
           <Forum user={user} footer={(compact) => accountFooter(compact)} onSignInNeeded={() => dialogOpen.set(true)} />
         ) : (
@@ -509,6 +619,7 @@ function App() {
       {/* Mounted only while a picture is shown: the read has to happen in this
           reactive child position, not inside the viewer's own body, or the
           overlay never appears when `openImageViewer` sets it later. */}
+      {settingsOpen() ? <SettingsSheet onClose={() => settingsOpen.set(false)} /> : null}
       {viewerImage() ? <ImageViewer /> : null}
       {/* After the viewer, so a message about saving a picture shows over it. */}
       <Toaster />

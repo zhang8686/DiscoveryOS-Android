@@ -2,8 +2,8 @@
 // av (aid) number; a `b23.tv` / `bili2233.cn` short link is kept as a URL, to be
 // resolved to one of those ids first (see resolve.ts).
 
-/** A video the player can take: by BV id or by av number. */
-export type BiliVideoId = { bvid: string } | { aid: string };
+/** A video the player can take: by BV id, by av number, or a bangumi episode (番剧). */
+export type BiliVideoId = { bvid: string } | { aid: string } | { ep: string };
 
 /** A video a post links to: a known id, or a short link to resolve. */
 export type BiliRef = BiliVideoId | { url: string };
@@ -16,6 +16,8 @@ const PATTERNS: { re: RegExp; ref: (m: RegExpMatchArray) => BiliRef }[] = [
   { re: /bilibili\.com\/video\/(BV[0-9A-Za-z]{10})/g, ref: (m) => ({ bvid: m[1] }) },
   // …/video/av170001
   { re: /bilibili\.com\/video\/av(\d{1,15})(?![0-9])/g, ref: (m) => ({ aid: m[1] }) },
+  // …/bangumi/play/ep6471761 (a series episode; played by `ep_id`)
+  { re: /bilibili\.com\/bangumi\/play\/ep(\d{1,12})(?![0-9])/g, ref: (m) => ({ ep: m[1] }) },
   // player.bilibili.com/player.html?bvid=… or ?aid=…
   { re: /player\.bilibili\.com\/player\.html\?[^\s"'<>]*?bvid=(BV[0-9A-Za-z]{10})/g, ref: (m) => ({ bvid: m[1] }) },
   { re: /player\.bilibili\.com\/player\.html\?[^\s"'<>]*?aid=(\d{1,15})(?![0-9])/g, ref: (m) => ({ aid: m[1] }) },
@@ -35,7 +37,7 @@ export function bilibiliVideoIn(text: string): BiliVideoId | undefined {
   return undefined;
 }
 
-const keyOf = (ref: BiliRef) => ("url" in ref ? `url:${ref.url}` : "bvid" in ref ? `bvid:${ref.bvid}` : `aid:${ref.aid}`);
+const keyOf = (ref: BiliRef) => ("url" in ref ? `url:${ref.url}` : "bvid" in ref ? `bvid:${ref.bvid}` : "ep" in ref ? `ep:${ref.ep}` : `aid:${ref.aid}`);
 
 /** The Bilibili videos a post's HTML links to, in order of first appearance, without repeats. */
 export function bilibiliRefs(html: string): BiliRef[] {

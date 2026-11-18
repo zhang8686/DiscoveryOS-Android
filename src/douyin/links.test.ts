@@ -34,6 +34,6 @@ test("shows at most a few players per post", () => {
   expect(douyinRefs(html).length).toEqual(MAX_DOUYIN_PER_POST);
 });
 
-test("every id becomes the jingxuan page", () => {
-  expect(douyinPageUrl("7704664139281869563")).toEqual("https://www.douyin.com/jingxuan?modal_id=7704664139281869563");
+test("every id becomes the share page", () => {
+  expect(douyinPageUrl("7704664139281869563")).toEqual("https://www.iesdouyin.com/share/video/7704664139281869563/");
 });

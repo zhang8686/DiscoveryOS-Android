@@ -3,7 +3,7 @@
 import { formEncodeGb, fetchGbRequest, htmlEntities, postFormGb, postGbNoRedirect } from "./encoding";
 import { absorbSetCookie, clearCookies, cookieHeader } from "./cookies";
 import { flushVault } from "./vault";
-import { htmlDecode } from "./parse";
+import { htmlDecode, parseLoginQuestions } from "./parse";
 
 export const HOST = "https://www.4d4y.com/forum/";
 
@@ -24,7 +24,7 @@ const PAGE_SIZE = /name="pppnew" value="(\d+)" checked="checked"/;
 // The header's own profile link shows the signed-in member's name.
 const MEMBER_LINK = /<a href="space\.php\?uid=\d+"[^>]*>([^<]+)<\/a>/;
 
-export type Session = { name: string; pass: string };
+export type Session = { name: string; pass: string; questionId?: number; answer?: string };
 
 let session: Session | null = null;
 // The signed-in member's name. Unlike `session`, this survives a restart:
@@ -72,7 +72,7 @@ export async function request(
     if (fresh) formHash = fresh;
   }
   if (retry && isLoginRequired(html) && session) {
-    const relogged = await reLogin(session.name, session.pass);
+    const relogged = await reLogin(session.name, session.pass, session.questionId, session.answer);
     if (relogged) return request(method, path, { query, form, retry: false, cookie });
   }
   return html;
@@ -93,18 +93,25 @@ export async function findFloor(tid: string, pid: string): Promise<{ html: strin
   return { html, page: Number(new URL(url).searchParams.get("page")) || 1 };
 }
 
-async function dologin(name: string, pass: string): Promise<string | undefined> {
+async function dologin(name: string, pass: string, questionId = 0, answer = ""): Promise<string | undefined> {
+  // A member who set a security question must answer it at login; the form posts the question's
+  // id (0 when there is none) and the answer.
+  const form: [string, string][] = [
+    ["username", name],
+    ["password", pass],
+    ["loginsubmit", "true"],
+    ["cookietime", "2592000"],
+  ];
+  if (questionId > 0) {
+    form.push(["questionid", String(questionId)]);
+    form.push(["answer", answer]);
+  }
   const html = await request("POST", "logging.php?action=login&loginsubmit=yes", {
     // Ask for a persistent login (30 days — the web form's "记住登录" cookietime).
     // Without it Discuz issues a session-only auth cookie; since Android never
     // stores the password, that cookie lapsing is why a launch the next day asked
     // for the login again.
-    form: [
-      ["username", name],
-      ["password", pass],
-      ["loginsubmit", "true"],
-      ["cookietime", "2592000"],
-    ],
+    form,
     retry: false,
   });
   return parseFormHash(html);
@@ -114,9 +121,9 @@ async function dologin(name: string, pass: string): Promise<string | undefined> 
 // share its answer, so a burst of loads logs in once rather than once each.
 let loginInFlight: Promise<string | undefined> | null = null;
 
-function reLogin(name: string, pass: string): Promise<string | undefined> {
+function reLogin(name: string, pass: string, questionId?: number, answer?: string): Promise<string | undefined> {
   // The new login's form hash replaces the old one: every write sends it, and the old one is refused.
-  loginInFlight ??= dologin(name, pass)
+  loginInFlight ??= dologin(name, pass, questionId, answer)
     .then((hash) => {
       if (hash) formHash = hash;
       return hash;
@@ -134,14 +141,14 @@ async function loadConfig(): Promise<void> {
 }
 
 /** Logs in; on success keeps the credentials for re-login and loads the config. */
-export async function login(name: string, pass: string): Promise<boolean> {
-  const hash = await dologin(name, pass);
+export async function login(name: string, pass: string, questionId = 0, answer = ""): Promise<boolean> {
+  const hash = await dologin(name, pass, questionId, answer);
   if (!hash) {
     session = null;
     formHash = null;
     return false;
   }
-  session = { name, pass };
+  session = { name, pass, questionId, answer };
   signedInName = name;
   formHash = hash;
   // The login reply still carries the guest form hash. Writes need the member's
@@ -155,6 +162,16 @@ export async function login(name: string, pass: string): Promise<boolean> {
   // The auth cookie must be durable before the app can be backgrounded.
   await flushVault();
   return true;
+}
+
+/** The security questions the login page offers, in its order; empty when the page has none. */
+export async function loadLoginQuestions(): Promise<{ id: number; text: string }[]> {
+  try {
+    const html = await request("GET", "logging.php?action=login", { retry: false });
+    return parseLoginQuestions(html);
+  } catch {
+    return [];
+  }
 }
 
 /** Logs out and forgets the session. (Cookies are the platform's; see the notes.) */
