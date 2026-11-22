@@ -1,0 +1,64 @@
+import { Overlay, signal, Text, View, type ViewRef } from "nsh";
+import { palette } from "./appearance";
+
+export type Shortcut = { key: string; action: string };
+
+export function ShortcutsHelp(props: { keys: Shortcut[]; onClose: () => void }) {
+  const card = signal<ViewRef | null>(null);
+  return (
+    <>
+      <View
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "rgba(0,0,0,0.35)",
+        }}
+      >
+        <View
+          ref={(n: ViewRef | null) => card.set(n)}
+          accessibilityLabel="键盘快捷键"
+          style={{
+            width: 340,
+            padding: 20,
+            gap: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: palette().border,
+            backgroundColor: palette().surface,
+          }}
+        >
+          <Text style={{ fontSize: 15, fontWeight: 600, color: palette().text }}>键盘快捷键</Text>
+          {props.keys.map((s) => (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <View
+                style={{
+                  minWidth: 56,
+                  paddingVertical: 2,
+                  paddingHorizontal: 6,
+                  borderRadius: 4,
+                  borderWidth: 1,
+                  borderColor: palette().border,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ fontSize: 12, color: palette().text }}>{s.key}</Text>
+              </View>
+              <Text style={{ fontSize: 13, color: palette().muted, flex: 1 }}>{s.action}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+      {}
+      {card() ? (
+        <Overlay anchor={card()} onPressOutside={props.onClose}>
+          <View style={{ width: 0, height: 0 }} />
+        </Overlay>
+      ) : null}
+    </>
+  );
+}
