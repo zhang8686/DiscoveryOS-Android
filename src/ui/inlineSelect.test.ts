@@ -10,16 +10,23 @@ test("a long press on the body opens the floor's text as an input the platform s
   expect(app.shows("text:第一行\n第二行 abc")).toBe(true);
 });
 
-test("the plain text is as tall as the floor's text, not as the row it replaced", async () => {
+test("the floor keeps its height, and the field sits in it at its own size", async () => {
   const app = await open("./inlineSelectHarness.tsx");
   await app.longPress("label:正文");
   await app.waitFor("id:inline-select-body", { timeout: 10000 });
-  // Two lines of the default body (15pt, ×1.5) is 46 points, and the text takes its own height —
-  // what the bug left was the list row's whole height: hundreds of points of blank under it.
+  // Two lines of the default body (15pt, ×1.5) is 46 points: the floor is that tall both before
+  // and after the swap — what the bug left was the list row's whole height under the text.
+  const block = app.layout("id:inline-select-block");
+  expect(block).not.toBe(null);
+  expect(block!.height).toBeGreaterThanOrEqual(44);
+  expect(block!.height).toBeLessThanOrEqual(52);
+  // The field draws its text at the platform's own leading, so it asks for less than the floor's
+  // height and is centred in it — the room left over is split above and below, not left under the
+  // last line.
   const box = app.layout("id:inline-select-body");
   expect(box).not.toBe(null);
-  expect(box!.height).toBeGreaterThanOrEqual(44);
-  expect(box!.height).toBeLessThanOrEqual(52);
+  expect(box!.height).toBeLessThan(block!.height);
+  expect(box!.height).toBeGreaterThan(block!.height * 0.5);
 });
 
 test("a press outside the text puts the rich body back", async () => {
