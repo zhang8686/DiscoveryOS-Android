@@ -1,5 +1,5 @@
 import { expect, open, test } from "nsh/test";
-import { createDoubleTap, createFinish } from "./InlineTextSelect";
+import { createFinish, selectedSlice } from "./InlineTextSelect";
 
 test("a long press on the body opens the floor's text in a read-only input", async () => {
   const app = await open("./inlineSelectHarness.tsx");
@@ -28,46 +28,44 @@ test("a press outside the input puts the rich body back", async () => {
   const app = await open("./inlineSelectHarness.tsx");
   await app.longPress("label:正文");
   await app.waitFor("id:inline-select-body", { timeout: 10000 });
-  // No button to press: the card around the input hears the press and closes the selection.
+  // The copy row ends it; a press on the card around the input does too.
   await app.press("label:楼层标题");
   await app.waitFor("text:长按这段正文");
   expect(app.shows("id:inline-select-body")).toBe(false);
 });
 
-test("a tap that moved is a handle drag, not half a double tap", () => {
-  let done = 0;
-  const taps = createDoubleTap(() => done++);
-  // A drag (a selection handle, or the text scrolled) never counts, and it clears the pair.
-  taps.start(10, 10);
-  taps.move(10, 80);
-  expect(taps.end(10, 80, 1_000)).toBe(false);
-  taps.start(10, 80);
-  expect(taps.end(10, 80, 1_050)).toBe(false);
-  expect(done).toBe(0);
-  // Two taps in the same place, a moment apart, do.
-  taps.start(20, 20);
-  expect(taps.end(20, 20, 1_400)).toBe(false);
-  taps.start(22, 21);
-  expect(taps.end(22, 21, 1_550)).toBe(true);
-  expect(done).toBe(1);
-  // Far apart, or slow, they are two taps of their own.
-  taps.start(20, 20);
-  expect(taps.end(20, 20, 2_000)).toBe(false);
-  taps.start(20, 200);
-  expect(taps.end(20, 200, 2_100)).toBe(false);
-  taps.start(20, 200);
-  expect(taps.end(20, 200, 3_000)).toBe(false);
-  expect(done).toBe(1);
+test("the copy row stays when nothing is selected, so a tap that missed is not the way out", async () => {
+  const app = await open("./inlineSelectHarness.tsx");
+  await app.longPress("label:正文");
+  await app.waitFor("id:inline-select-body", { timeout: 10000 });
+  await app.press("id:inline-select-copy");
+  await new Promise((r) => setTimeout(r, 400));
+  // No selection, so nothing was copied and nothing closed: the field is still there to select in.
+  expect(app.shows("id:inline-select-body")).toBe(true);
+  expect(app.shows("text:已复制：")).toBe(false);
 });
 
-test("closing drops the selection first, and takes the field away a moment later", async () => {
+test("a selection's text is the run between its ends, in either order", () => {
+  expect(selectedSlice("第一行\n第二行 abc", 0, 3)).toBe("第一行");
+  // A handle dragged past the other end reports them swapped.
+  expect(selectedSlice("第一行\n第二行 abc", 3, 0)).toBe("第一行");
+  // A caret selects nothing.
+  expect(selectedSlice("第一行\n第二行 abc", 2, 2)).toBe("");
+  // Offsets past the text (a stale report) stop at its end.
+  expect(selectedSlice("abc", -5, 99)).toBe("abc");
+});
+
+test("closing waits for the touch to finish, then drops the selection before the field goes", async () => {
   const calls: string[] = [];
   const finish = createFinish(() => calls.push("clear"), () => calls.push("done"));
   finish();
+  // Nothing happens inside the tap's own dispatch: that is what left the page deaf to touches.
+  expect(calls).toEqual([]);
   // Twice is one close: the second would start a second state change on a gone field.
   finish();
+  await new Promise((r) => setTimeout(r, 30));
   expect(calls).toEqual(["clear"]);
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 300));
   expect(calls).toEqual(["clear", "done"]);
 });
 
@@ -80,6 +78,6 @@ test("a field already gone still reports the close, so the body comes back", asy
     () => calls.push("done"),
   );
   finish();
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 300));
   expect(calls).toEqual(["done"]);
 });

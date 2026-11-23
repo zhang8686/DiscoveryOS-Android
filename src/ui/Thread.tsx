@@ -358,9 +358,10 @@ export function Thread(props: {
   // body puts the floor's plain text in a native read-only input in its own place, where the
   // platform's own handles move by character; a press outside it puts the rich body back.
   const inlineSelect = signal<number | null>(null);
-  // How a press outside the input closes the selection: through the screen itself, which drops the
-  // platform's selection before it goes away (`createFinish` in InlineTextSelect.tsx says why the
-  // order matters). Only a fallback until that screen is up.
+  // How the selection ends, from anywhere on the page: the copy row inside the input is the way it
+  // is meant to close, and a press outside it, or Back, closes it too, through the same path
+  // (`createFinish` in InlineTextSelect.tsx says why every step happens off the touch's dispatch).
+  // Only a fallback until the input has handed its own in.
   let endInlineSelect = () => inlineSelect.set(null);
   // Back closes the selection before it leaves the floor. An open platform selection carried off
   // screen takes its toolbar with it: the toolbar is a window of its own, over everything, and
@@ -838,8 +839,8 @@ export function Thread(props: {
               () => profileTarget.set({ uid: item().author.id, name: item().author.name, avatar: item().author.avatar })
             }
             meta={`#${item().seq} · ${timeAgo(item().at)}`}
-            // A press anywhere in a floor that the text's own input did not take puts the rich
-            // body back: that is how the selection ends — no button to hunt for.
+            // The copy row ends the selection; a press anywhere the input did not take is the way
+            // out when the button was missed, and puts the rich body back too.
             onPress={inlineSelect() !== null ? () => endInlineSelect() : undefined}
             highlighted={() => hovered() === item().seq}
             onHoverIn={() => hovered.set(item().seq)}
@@ -877,6 +878,9 @@ export function Thread(props: {
                 <InlineTextSelect
                   text={htmlToText(bodyHtml(item()))}
                   onDone={() => inlineSelect.set(null)}
+                  onCopied={(copied) =>
+                    notify("inline-copy", copied ? "已复制选中文字。" : "请先用长按选好要复制的文字。")
+                  }
                   onApi={(api) => {
                     endInlineSelect = api.finish;
                   }}
