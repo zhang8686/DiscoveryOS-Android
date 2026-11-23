@@ -355,13 +355,14 @@ export function Thread(props: {
   const pmTarget = signal<{ id: string; name: string } | null>(null);
   const pmWriting = signal(false);
   // The floor whose body is open for character-precise selection (`null`: none): a long press on a
-  // body puts the floor's plain text in a native read-only input in its own place, where the
-  // platform's own handles move by character; a press outside it puts the rich body back.
+  // body puts the floor's plain text in its own place, selectable, where the platform's own handles
+  // move by character. The platform reports the selection emptying — a copy, a press outside — and
+  // that puts the rich body back.
   const inlineSelect = signal<number | null>(null);
-  // How the selection ends, from anywhere on the page: the copy row inside the input is the way it
-  // is meant to close, and a press outside it, or Back, closes it too, through the same path
-  // (`createFinish` in InlineTextSelect.tsx says why every step happens off the touch's dispatch).
-  // Only a fallback until the input has handed its own in.
+  // How the selection ends, from anywhere on the page: the platform's own Copy is the way it is
+  // meant to close, and a press outside the text, or Back, closes it too, through the same path
+  // (`createFinish` in InlineTextSelect.tsx says why the view goes a moment after the selection).
+  // Only a fallback until the screen has handed its own in.
   let endInlineSelect = () => inlineSelect.set(null);
   // Back closes the selection before it leaves the floor. An open platform selection carried off
   // screen takes its toolbar with it: the toolbar is a window of its own, over everything, and
@@ -870,17 +871,13 @@ export function Thread(props: {
             }
             body={
               // A long press on the body opens it for character-precise selection: the rich body
-              // (pictures and markup with it) gives way to a read-only native input in the same
-              // place, where the platform's own handles move character by character — what the
-              // text view's selection does not do on Android. A press anywhere else puts the rich
-              // body back (see `onPress` above).
+              // (pictures and markup with it) gives way to plain selectable text in the same place,
+              // where the platform's own handles move character by character. Copying it, or a
+              // press anywhere else, puts the rich body back (see `onPress` above).
               inlineSelect() === item().seq ? (
                 <InlineTextSelect
                   text={htmlToText(bodyHtml(item()))}
                   onDone={() => inlineSelect.set(null)}
-                  onCopied={(copied) =>
-                    notify("inline-copy", copied ? "已复制选中文字。" : "请先用长按选好要复制的文字。")
-                  }
                   onApi={(api) => {
                     endInlineSelect = api.finish;
                   }}
