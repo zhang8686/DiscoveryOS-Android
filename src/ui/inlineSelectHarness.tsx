@@ -7,15 +7,23 @@ const TEXT = "第一行\n第二行 abc";
 
 export default function InlineSelectHarness() {
   const open = signal(false);
+  // As a floor does: a press on the card outside the input ends the selection, through the screen's
+  // own `finish` (it clears the platform's selection before the input goes away).
+  let closeSelect = () => open.set(false);
   return (
     <View
       style={{ flex: 1, padding: 16 }}
-      // As a floor does: a press on the card outside the input ends the selection.
-      onPress={open() ? () => open.set(false) : undefined}
+      onPress={open() ? () => closeSelect() : undefined}
     >
       <Text accessibilityLabel="楼层标题">楼层标题</Text>
       {open() ? (
-        <InlineTextSelect text={TEXT} onDone={() => open.set(false)} />
+        <InlineTextSelect
+          text={TEXT}
+          onDone={() => open.set(false)}
+          onApi={(api) => {
+            closeSelect = api.finish;
+          }}
+        />
       ) : (
         <View
           accessibilityLabel="正文"

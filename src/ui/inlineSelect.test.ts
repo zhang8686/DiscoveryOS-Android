@@ -1,5 +1,5 @@
 import { expect, open, test } from "nsh/test";
-import { createDoubleTap } from "./InlineTextSelect";
+import { createDoubleTap, createFinish } from "./InlineTextSelect";
 
 test("a long press on the body opens the floor's text in a read-only input", async () => {
   const app = await open("./inlineSelectHarness.tsx");
@@ -58,4 +58,28 @@ test("a tap that moved is a handle drag, not half a double tap", () => {
   taps.start(20, 200);
   expect(taps.end(20, 200, 3_000)).toBe(false);
   expect(done).toBe(1);
+});
+
+test("closing drops the selection first, and takes the field away a moment later", async () => {
+  const calls: string[] = [];
+  const finish = createFinish(() => calls.push("clear"), () => calls.push("done"));
+  finish();
+  // Twice is one close: the second would start a second state change on a gone field.
+  finish();
+  expect(calls).toEqual(["clear"]);
+  await new Promise((r) => setTimeout(r, 200));
+  expect(calls).toEqual(["clear", "done"]);
+});
+
+test("a field already gone still reports the close, so the body comes back", async () => {
+  const calls: string[] = [];
+  const finish = createFinish(
+    () => {
+      throw new Error("gone");
+    },
+    () => calls.push("done"),
+  );
+  finish();
+  await new Promise((r) => setTimeout(r, 200));
+  expect(calls).toEqual(["done"]);
 });

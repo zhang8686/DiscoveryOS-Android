@@ -1,6 +1,7 @@
 import { Clipboard, cleanup, colorScheme, createAnimatedValue, createMotion, effect, keymap, List, pixelRatio, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef, type JSX } from "nsh";
 import { settleBack, settleExit, slideIn } from "./pageSlide";
 import { Dialog, TextView } from "nsh/base";
+import { BackHandler } from "nsh/mobile";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
 import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
@@ -357,6 +358,20 @@ export function Thread(props: {
   // body puts the floor's plain text in a native read-only input in its own place, where the
   // platform's own handles move by character; a press outside it puts the rich body back.
   const inlineSelect = signal<number | null>(null);
+  // How a press outside the input closes the selection: through the screen itself, which drops the
+  // platform's selection before it goes away (`createFinish` in InlineTextSelect.tsx says why the
+  // order matters). Only a fallback until that screen is up.
+  let endInlineSelect = () => inlineSelect.set(null);
+  // Back closes the selection before it leaves the floor. An open platform selection carried off
+  // screen takes its toolbar with it: the toolbar is a window of its own, over everything, and
+  // every touch afterwards would land on it instead of the page.
+  try {
+    BackHandler.on("press", () => {
+      if (inlineSelect() === null) return false;
+      endInlineSelect();
+      return true;
+    });
+  } catch { /* the desktop preview has no back key */ }
 
   // A scroll pauses a video playing in the thread, so it never plays on off screen. Throttled:
   // the pause reaches the page at most a few times a second while the finger keeps moving.
@@ -752,7 +767,7 @@ export function Thread(props: {
           on the bar's 44pt; it drags the window where nothing presses. With no bar, it keeps the top inset. */}
       <View
         desktop={{ windowDrag: true }}
-        onPress={inlineSelect() !== null ? () => inlineSelect.set(null) : undefined}
+        onPress={inlineSelect() !== null ? () => endInlineSelect() : undefined}
         style={{
           // The bar floats over the body in both orientations, so it can slide away on scroll and
           // let the text take its place.
@@ -825,7 +840,7 @@ export function Thread(props: {
             meta={`#${item().seq} · ${timeAgo(item().at)}`}
             // A press anywhere in a floor that the text's own input did not take puts the rich
             // body back: that is how the selection ends — no button to hunt for.
-            onPress={inlineSelect() !== null ? () => inlineSelect.set(null) : undefined}
+            onPress={inlineSelect() !== null ? () => endInlineSelect() : undefined}
             highlighted={() => hovered() === item().seq}
             onHoverIn={() => hovered.set(item().seq)}
             onHoverOut={() => {
@@ -862,6 +877,9 @@ export function Thread(props: {
                 <InlineTextSelect
                   text={htmlToText(bodyHtml(item()))}
                   onDone={() => inlineSelect.set(null)}
+                  onApi={(api) => {
+                    endInlineSelect = api.finish;
+                  }}
                 />
               ) : (
               <View
