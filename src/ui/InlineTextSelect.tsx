@@ -74,6 +74,15 @@ export type InlineTextSelectApi = { finish: () => void };
  * Tapping Copy ends it, with nothing of the app's in the way: the selection collapses in the
  * platform's code and that report is what puts the rich body back. A press outside the text, or
  * Back, closes it through the same path.
+ *
+ * The floor keeps its size while the body is a field. The text is laid out twice: an invisible
+ * copy in the layout's own flow, at the body's size and leading, is what holds the floor's height
+ * and its wrapping column (the text engine wraps it, so the field breaks lines in the same places);
+ * the field, drawn over it, is as tall as the platform draws its own text and is centred in that
+ * height, so the extra room goes above and below it in equal parts instead of collecting under the
+ * last line. The field's leading is the platform's own (Android's EditText has no line height the
+ * framework sets, it takes the font's), which is a little tighter than the body's — the one thing
+ * here that cannot be asked for.
  */
 export function InlineTextSelect(props: {
   text: string;
@@ -94,14 +103,20 @@ export function InlineTextSelect(props: {
   props.onApi?.({ finish });
   const selectionEnded = createSelectionEnd(finish);
   return (
-    <View style={{ alignSelf: "stretch", gap: 4 }}>
-      {/* The text is laid out twice: here, invisible, in the layout's own flow — it is what gives
-          the box its height, wrapped at this column's width by the text engine — and by the input,
-          drawn over it. Sizing the input any other way left blank lines under the last line: a
-          multiline input on Android reports its frame's height (the list row's estimate) as its
-          content's, and it is its frame that then sticks at that size. */}
-      <View style={{ alignSelf: "stretch" }}>
-        <Text style={{ fontSize: size, lineHeight, opacity: 0 }}>{props.text}</Text>
+    <View testID="inline-select-block" style={{ alignSelf: "stretch" }}>
+      {/* The body's own text, invisible: it is the height and the wrapping column the floor had,
+          so the floor does not move when its rich body gives way to the field. */}
+      <Text style={{ fontSize: size, lineHeight, opacity: 0 }}>{props.text}</Text>
+      <View
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          justifyContent: "center",
+        }}
+      >
         <Input
           testID="inline-select-body"
           ref={(n: InputRef | null) => {
@@ -111,17 +126,10 @@ export function InlineTextSelect(props: {
           readonly={true}
           value={props.text}
           scrollbar={false}
-          onSelectionChange={(e: { start: number; end: number }) =>
-            selectionEnded(e.start, e.end)
-          }
+          onSelectionChange={(e: { start: number; end: number }) => selectionEnded(e.start, e.end)}
           style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: 0,
-            bottom: 0,
+            alignSelf: "stretch",
             fontSize: size,
-            lineHeight,
             color: palette().text,
             backgroundColor: "transparent",
             paddingHorizontal: 0,
@@ -130,9 +138,6 @@ export function InlineTextSelect(props: {
           }}
         />
       </View>
-      <Text style={{ fontSize: 11, lineHeight: 15, color: palette().muted }}>
-        长按选词，拖两端手柄逐字选；点浮条「复制」后自动恢复正文
-      </Text>
     </View>
   );
 }

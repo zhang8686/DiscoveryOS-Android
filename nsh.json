@@ -1,0 +1,67 @@
+{
+  "name": "DiscoveryOSX",
+  "id": "com.Android.DiscoveryOSX",
+  "version": "1.2.1",
+  "build": 60,
+  "icon": "icon.png",
+  "android": {
+    "targetSdk": 35
+  },
+  "capabilities": {
+    "application": true,
+    "homeDir": true,
+    "statusBar": true,
+    "network": {
+      "hosts": [
+        "www.4d4y.com",
+        "*.4d4y.com",
+        "img02.4d4y.com",
+        "*.bilibili.com",
+        "b23.tv",
+        "bili2233.cn",
+        "*.hdslb.com",
+        "*.bilivideo.com",
+        "*.douyin.com",
+        "*.iesdouyin.com",
+        "*.douyinvod.com",
+        "*.douyinpic.com",
+        "*.douyinstatic.com",
+        "*.byteimg.com",
+        "*.bytecdn.cn",
+        "*.snssdk.com",
+        "*.xiaohongshu.com",
+        "*.xhscdn.com",
+        "github.com",
+        "*.githubusercontent.com"
+      ]
+    },
+    "webview": {
+      "hosts": [
+        "www.4d4y.com",
+        "*.4d4y.com"
+      ]
+    },
+    "openUrl": {
+      "schemes": [
+        "https",
+        "http"
+      ]
+    },
+    "clipboard": true,
+    "share": true,
+    "process": {
+      "env": [
+        "DISCUZ_COOKIES"
+      ]
+    },
+    "fs": {
+      "read": [
+        "${dataDir}"
+      ],
+      "write": [
+        "${dataDir}"
+      ]
+    },
+    "picker": true
+  }
+}
