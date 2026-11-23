@@ -7,9 +7,8 @@ const TEXT = "第一行\n第二行 abc";
 
 export default function InlineSelectHarness() {
   const open = signal(false);
-  const copied = signal("");
-  // As a floor does: a press on the card outside the input ends the selection, through the screen's
-  // own `finish` (it clears the platform's selection before the input goes away).
+  // As a floor does: a press on the card outside the text ends the selection, through the screen's
+  // own `finish` (it waits for the platform's selection to be done before the text goes away).
   let closeSelect = () => open.set(false);
   return (
     <View
@@ -17,12 +16,10 @@ export default function InlineSelectHarness() {
       onPress={open() ? () => closeSelect() : undefined}
     >
       <Text accessibilityLabel="楼层标题">楼层标题</Text>
-      <Text accessibilityLabel="复制结果">{copied() ? `已复制：${copied()}` : ""}</Text>
       {open() ? (
         <InlineTextSelect
           text={TEXT}
           onDone={() => open.set(false)}
-          onCopied={(text) => copied.set(text)}
           onApi={(api) => {
             closeSelect = api.finish;
           }}
