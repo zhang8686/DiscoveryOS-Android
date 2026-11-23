@@ -1,6 +1,7 @@
 import { expect, test } from "nsh/test";
 import { attachmentLinks, fixImages, isAttachmentUrl } from "./parse";
-import { safeFileName, splitFileName } from "./attachments";
+import { attachmentFileName, extensionForType, fileNameFromDisposition, safeFileName, splitFileName } from "./attachments";
+import { Gb18030 } from "../nativeStub";
 
 test("finds a post's file links by their text, and not a picture's link", () => {
   const html =
@@ -48,4 +49,26 @@ test("splits a name at its last dot", () => {
   expect(splitFileName("a.tar.gz")).toEqual({ stem: "a.tar", ext: ".gz" });
   expect(splitFileName("README")).toEqual({ stem: "README", ext: "" });
   expect(splitFileName(".gitignore")).toEqual({ stem: ".gitignore", ext: "" });
+});
+
+test("takes a file's real name from the forum's answer", () => {
+  expect(fileNameFromDisposition('attachment; filename="newton.md"')).toBe("newton.md");
+  expect(fileNameFromDisposition("attachment; filename*=UTF-8''%E8%AF%B4%E6%98%8E%E4%B9%A6.pdf")).toBe("说明书.pdf");
+  // Discuz writes Chinese names in GB18030: the bytes arrive as one character per byte.
+  const gbk = Array.from(Gb18030.encode("说明书.zip")).map((b) => String.fromCharCode(b)).join("");
+  expect(fileNameFromDisposition(`attachment; filename="${gbk}"`)).toBe("说明书.zip");
+  expect(fileNameFromDisposition("inline")).toBe(null);
+  expect(fileNameFromDisposition(null)).toBe(null);
+});
+
+test("names a download that the link calls 下载", () => {
+  // The link text is the forum's word for it; the answer names the file.
+  expect(attachmentFileName("下载", "newton.md", "text/plain")).toBe("newton.md");
+  // Nothing names it but the type: the stem carries the moment, the extension the type.
+  expect(attachmentFileName("下载", null, "application/zip")).toMatch(/^附件-\d{8}-\d{4}\.zip$/);
+  expect(attachmentFileName("下载", null, "application/octet-stream")).toMatch(/^附件-\d{8}-\d{4}$/);
+  // A name without an extension keeps the one the type gives it.
+  expect(attachmentFileName("下载", "download", "application/pdf")).toMatch(/^附件-\d{8}-\d{4}\.pdf$/);
+  expect(extensionForType("text/plain; charset=utf-8")).toBe("txt");
+  expect(extensionForType("application/whatever")).toBe("");
 });

@@ -57,6 +57,8 @@ export type Post = {
   focusPid?: string;
   /** The list marks a thread that carries attachments (pictures), so its row can say so. */
   hasImages?: boolean;
+  /** Discuz's agree.gif on the title: the post was awarded points ("帖子被加分"). */
+  agreed?: boolean;
 };
 
 /**
@@ -106,22 +108,34 @@ export function parseChannelLinks(html: string): Channel[] {
   return [...found.values()];
 }
 
-/** The threads on a forum page (`DiscuzAPI.loadPosts`). */
-export function parsePosts(html: string, order: "dateline" | "lastpost" = "lastpost"): Post[] {
+/** Discuz's "post was awarded points" marker on a thread title. */
+const AGREE_MARK = /agree\.gif|alt="[^"]*加分[^"]*"|title="[^"]*加分[^"]*"/i;
+
+/** The threads on a forum page (`DiscuzAPI.loadPosts`).
+ * `fid` is the board being shown: the forum page names the board in its navigation, not in each
+ * row, so the caller passes it from the channel. It lets a row carry a stable board colour. */
+export function parsePosts(html: string, order: "dateline" | "lastpost" = "lastpost", fid?: string): Post[] {
   const posts: Post[] = [];
   const stickyIds = new Set<string>();
   for (const m of html.matchAll(/<tbody id="stickythread_(\d+)"/g)) stickyIds.add(m[1]);
   for (const row of captureGroups(html, "<tr>.*?</tr>")) {
     const col = captureGroups(
       row,
-      '<span[^>]*><a href="viewthread\\.php\\?tid=(\\d+)[^>]*>([\\s\\S]*?)</a>.*?href="space\\.php\\?uid=(\\d+)">([^<]+)</a>.*<em>(\\d{4}-\\d{1,2}-\\d{1,2})</em>.*<td class="nums"><strong>(\\d+)</strong>/<em>(\\d+)</em></td>.*space\\.php\\?username=[^"]+">([^<]+)<.*lastpost">([^<]+)<',
+      '<span[^>]*><a href="[^"]*viewthread\\.php\\?tid=(\\d+)[^>]*>([\\s\\S]*?)</a>.*?href="[^"]*space\\.php\\?uid=(\\d+)">([^<]+)</a>.*<em>(\\d{4}-\\d{1,2}-\\d{1,2})</em>.*<td class="nums"><strong>(\\d+)</strong>/<em>(\\d+)</em></td>.*[^"]*space\\.php\\?username=[^"]+">([^<]+)<.*lastpost">([^<]+)<',
       true,
     );
     if (col.length === 0) continue;
     const authorCell = /<td[^>]*class="author"[^>]*>([\s\S]*?)<\/td>/i.exec(row)?.[1] ?? "";
     const atFull = /title="(\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)"/.exec(authorCell)?.[1]?.trim();
     const rawTitle = col[1];
-    const titleColor = /color\s*[:=]\s*["']?(#[0-9a-f]{3,8}|[a-z]+)/i.exec(rawTitle)?.[1];
+    // Discuz puts a highlighted title's colour on the <a> tag's style, not in the title text.
+    // A row can hold several <a> tags for the same tid (title / "new window" / page links);
+    // scan them all so the coloured one is not missed, and fall back to a colour in the title
+    // markup itself (e.g. <em style="color:red">).
+    const linkTags = [...row.matchAll(new RegExp(`<a\\b[^>]*href="[^"]*viewthread\\.php\\?tid=${col[0]}[^"]*"[^>]*>`, "gi"))]
+      .map((m) => m[0]).join(" ");
+    const COLOR_RE = /color\s*[:=]\s*["']?(#[0-9a-f]{3,8}|[a-z]+)/i;
+    const titleColor = COLOR_RE.exec(linkTags)?.[1] ?? COLOR_RE.exec(rawTitle)?.[1];
     posts.push({
       id: col[0],
       title: htmlDecode(rawTitle.replace(/<[^>]*>/g, "")),
@@ -134,7 +148,10 @@ export function parsePosts(html: string, order: "dateline" | "lastpost" = "lastp
       lastReplyBy: removePercentEncoding(col[7]),
       lastReplyAt: col[8],
       pinned: stickyIds.has(col[0]) || undefined,
-      ...(ATTACH_MARK.test(row) ? { hasImages: true } : {}),
+      ...(fid ? { fid } : {}),
+      ...(AGREE_MARK.test(row) ? { agreed: true } : {}),
+      // agree.gif carries class="attach"; it is a points marker, not a picture attachment.
+      ...(ATTACH_MARK.test(row) && !AGREE_MARK.test(row) ? { hasImages: true } : {}),
     });
   }
   if (order === "dateline") return posts;
@@ -183,7 +200,8 @@ export function parseSearchResults(html: string): Post[] {
       views: Number(nums?.[2]) || 0,
       lastReplyBy: last ? removePercentEncoding(last[1]) : undefined,
       lastReplyAt: last?.[2],
-      ...(ATTACH_MARK.test(row) ? { hasImages: true } : {}),
+      ...(AGREE_MARK.test(row) ? { agreed: true } : {}),
+      ...(ATTACH_MARK.test(row) && !AGREE_MARK.test(row) ? { hasImages: true } : {}),
     });
   }
   return posts;
@@ -904,3 +922,64 @@ export function isAttachmentUrl(href: string): boolean {
 
 /** The forum's base URL, for relative paths (`DiscuzAPI.host`). */
 export const HOST_BASE = "https://www.4d4y.com/forum/";
+
+/** The attachment id Discuz gives a block (`aid123`) or its link (`aid=123`), if either is there. */
+function attachmentId(html: string): string | undefined {
+  return /\bid="aid(\d+)"/i.exec(html)?.[1] ?? /\baid=(\d+)/i.exec(html)?.[1];
+}
+
+/** The first attachment a fragment links to, whether or not its link carries a name. */
+function firstAttachmentUrl(html: string): string | undefined {
+  const files = attachmentLinks(html);
+  if (files.length > 0) return files[0].url;
+  for (const [, href] of html.matchAll(LINK_WITH_TEXT)) {
+    const url = htmlDecode(href);
+    if (isAttachmentUrl(url)) return url;
+  }
+  return undefined;
+}
+
+/** A picture that fills the column and opens its own picture on a press, as `fixImages` draws one. */
+function pictureBlock(url: string): string {
+  const src = escapeAttr(absoluteUrl(url, HOST_BASE));
+  return `<p><a href="${src}"><img src="${src}" width="100%"></a></p>`;
+}
+
+/** A fragment's attachment links that are pictures, each replaced by the picture itself. */
+function anchorsToPictures(html: string, isPicture: (url: string) => boolean): string {
+  return html.replace(LINK_WITH_TEXT, (whole: string, href: string) => {
+    const url = htmlDecode(href);
+    if (!isAttachmentUrl(url) || !isPicture(url)) return whole;
+    return pictureBlock(url);
+  });
+}
+
+/**
+ * A post's attachments that are pictures, drawn in the post where Discuz only offers their
+ * download: a picture the author attached without putting it in the text (`[attach]` rather than
+ * `[attachimg]`) arrives as a line reading 下载 (310.76 KB) and its date, the forum's own menu for
+ * the attachment — nothing to look at. Such a block, and a bare link to the same, becomes the
+ * picture. `isPicture` answers whether an attachment at that address is a picture the app can
+ * load (see `attachPictures`), so a file stays the download it was; a picture the post already
+ * shows (`aimg_<id>`) is left alone, never drawn twice.
+ *
+ * Run last, on the HTML the text view draws: the addresses are absolute by then.
+ */
+export function showAttachedPictures(html: string, isPicture: (url: string) => boolean): string {
+  let out = "";
+  let at = 0;
+  const blocks = /<div\b[^>]*\bclass=(?:"[^"]*\bt_attach\b[^"]*"|'[^']*\bt_attach\b[^']*')[^>]*>/gi;
+  for (const m of html.matchAll(blocks)) {
+    const start = m.index ?? 0;
+    const end = closingDivEnd(html, start + m[0].length);
+    if (end < 0) continue;
+    out += anchorsToPictures(html.slice(at, start), isPicture);
+    const block = html.slice(start, end);
+    const url = firstAttachmentUrl(block);
+    const id = attachmentId(block);
+    const shown = id ? html.includes(`aimg_${id}`) : false;
+    out += url && !shown && isPicture(url) ? pictureBlock(url) : block;
+    at = end;
+  }
+  return out + anchorsToPictures(html.slice(at), isPicture);
+}

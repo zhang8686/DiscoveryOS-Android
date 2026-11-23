@@ -6,7 +6,7 @@ export type IconName =
   | "sort" | "check"
   | "tag" | "telescope" | "pencil" | "geek" | "phone" | "apple" | "robot"
   | "palm" | "windows" | "headphones" | "thought" | "bowl" | "lipstick"
-  | "chat" | "list" | "grip" | "image" | "paperclip" | "chevronUp" | "chevronDown";
+  | "chat" | "list" | "grip" | "image" | "paperclip" | "chevronUp" | "chevronDown" | "thumb";
 
 type Ctx = {
   m: (x: number, y: number) => void;
@@ -229,6 +229,12 @@ const SHAPES: Record<IconName, Shape> = {
   },
   chevronUp: (c) => { c.m(0.24, 0.6); c.l(0.5, 0.34); c.l(0.76, 0.6); c.stroke(); },
   chevronDown: (c) => { c.m(0.24, 0.4); c.l(0.5, 0.66); c.l(0.76, 0.4); c.stroke(); },
+  thumb: (c) => {
+    c.m(0.18, 0.46); c.l(0.34, 0.46); c.l(0.44, 0.14);
+    c.q(0.5, 0.1, 0.54, 0.18); c.l(0.54, 0.42); c.l(0.82, 0.42);
+    c.q(0.9, 0.42, 0.88, 0.52); c.l(0.8, 0.86); c.l(0.18, 0.86);
+    c.l(0.18, 0.46); c.stroke();
+  },
 };
 
 SHAPES.doc = (c) => {

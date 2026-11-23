@@ -1,9 +1,10 @@
-import { Clipboard, colorScheme, createAnimatedValue, createMotion, effect, keymap, List, pixelRatio, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef, type JSX } from "nsh";
+import { Clipboard, cleanup, colorScheme, createAnimatedValue, createMotion, effect, keymap, List, pixelRatio, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef, type JSX } from "nsh";
 import { settleBack, settleExit, slideIn } from "./pageSlide";
 import { Dialog, TextView } from "nsh/base";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
-import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, isAttachmentUrl, linkifyBareUrls, mergePage, splitBrIntoParagraphs, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
+import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
+import { attachmentIsPicture } from "../discuz/attachments";
 import { draftToPost, postToDraft, replyQuoteInDraft, splitDraftQuote } from "../discuz/quote";
 import { downloadAttachment } from "./downloads";
 import { DISCUZ_EXTENSIONS, renderDiscuzNode } from "./discuzMarkup";
@@ -19,12 +20,16 @@ import { titleBarShown } from "./TitleBar";
 import { BrowserIcon, BubbleIcon, EnvelopeIcon, LinkIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
 import { ReplyCard } from "./ReplyCard";
 import { ReplyBox } from "./ReplyBox";
+import { bodyPicturePx, warmImages } from "./imageWarm";
+import { ThreadSkeleton } from "./Skeleton";
 import { attachmentTag, createAttachments } from "./attachments";
 import type { Attached } from "./ReplyBox";
 import { hint } from "./Hint";
 import { displaySettings } from "./settings";
 import { PmComposer } from "./PmComposer";
 import { ProfileSheet } from "./ProfileSheet";
+import { InlineTextSelect } from "./InlineTextSelect";
+import { attachedPicture, attachedPictureKnown, attachedPictureRevision } from "./attachPictures";
 import { canSendReply } from "./replyGate";
 
 import { isFavorite, markFavorite } from "./favorites";
@@ -67,20 +72,6 @@ function cachedBodyHtml(id: string, parse: () => string): string {
   }
   return html;
 }
-
-// A Discuz post joins its text lines with `<br>`, which NSH's text view reads as
-// one block with soft breaks. On Android the selectable text view's hit-test
-// resolves a long press only against a block's first line — pressed on a later
-// line it lands at the block's end, so the word under the finger is never the one
-// selected and the handles start out collapsed there ("cannot drag, whole line
-// only"). `splitBrIntoParagraphs` (in parse.ts) turns each `<br>` into a paragraph
-// boundary so every visual line is its own block and the press lands on the right
-// line. `LINE_STYLES` zeroes the paragraph margins so one paragraph per line reads
-// as the single block it was.
-
-// Zeroes a paragraph's vertical margins, so one paragraph per line reads as the
-// single block it was. `styles` reach the `paragraph` part where `classes` does not.
-const LINE_STYLES = { paragraph: { marginTop: 0, marginBottom: 0 } } as const;
 
 // The thread's title shows in the header at the large size; the first post's
 // own heading (its title, in the body) takes the small size the header had.
@@ -244,10 +235,10 @@ export function Thread(props: {
   }
 
   /** How wide a body picture is drawn, in device pixels: the column's width at this screen's
-   *  density, clamped so a tablet does not ask for a needlessly large copy. */
+   *  density, clamped so a tablet does not ask for a needlessly large copy. Shared with the
+   *  warm-up, so a picture fetched ahead is exactly the one this transform asks for. */
   function bodyImagePx(): number {
-    const px = Math.round(windowSize().width * pixelRatio());
-    return Math.min(1440, Math.max(720, px));
+    return bodyPicturePx();
   }
 
   // (The HTML transform cache is module-level, declared above the component, so it survives
@@ -255,19 +246,35 @@ export function Thread(props: {
   // the key: a rotation asks for the column's new pixel width, not the old one's copy.)
   function bodyHtml(r: Reply): string {
     const px = bodyImagePx();
+    // Keep the post body as ONE continuous block: nsh's selectable view scopes a selection to a
+    // block ("each block on its own"), so splitting every <br> into its own <p> trapped the
+    // selection in a single line — long press picked a word but the handles could not reach text
+    // on the next line ("whole line only"). A plain <br> is a soft break inside the same block;
+    // nsh 0.6 renders it as a newline and its selection hit-test walks wrapped lines, so handles
+    // can now be dragged across the whole post to copy any run of characters.
     return cachedBodyHtml(`${r.id}@${px}`, () =>
-      absolutize(trimLeadingBlanks(linkifyBareUrls(splitBrIntoParagraphs(fixDiscuzMarkup(fixImages(r.body, px))))), HOST));
+      absolutize(trimLeadingBlanks(linkifyBareUrls(fixDiscuzMarkup(fixImages(r.body, px)))), HOST));
   }
 
   // The pictures a post shows, read from the same transformed HTML the text view draws, so what
   // the reader taps is exactly what the viewer's gallery holds.
   const galleryOf = new Map<string, ReturnType<typeof postImages>>();
   function postPictures(r: Reply) {
-    const hit = galleryOf.get(r.id);
+    // A floor redraws when an attachment's answer arrives, so the gallery is kept per answer too.
+    const key = `${r.id}@${attachedPictureRevision()}`;
+    const hit = galleryOf.get(key);
     if (hit) return hit;
-    const list = postImages(bodyHtml(r));
-    galleryOf.set(r.id, list);
+    const list = postImages(drawnBody(r));
+    galleryOf.set(key, list);
     return list;
+  }
+
+  /** The body as drawn: a picture the author attached without putting it in the text shows where
+   *  its download line was. An attachment's answer arrives after the floor first draws, so this
+   *  reads the revision signal to be drawn again with the picture. */
+  function drawnBody(r: Reply): string {
+    attachedPictureRevision();
+    return showAttachedPictures(bodyHtml(r), attachedPicture);
   }
 
   /** Opens the viewer at one of a post's pictures: the one tapped when its HTML names it, and on
@@ -279,6 +286,41 @@ export function Thread(props: {
     else openImageViewer(full, display);
   }
 
+  /**
+   * A press on a Discuz attachment (`attachment.php`): a picture opens the viewer, a file is
+   * downloaded. The forum answers which it is with the file's own type, asked once per address and
+   * remembered (the body asks the same while it draws a picture in place), so a zip is never
+   * handed to the picture viewer and a screenshot is never saved as a file.
+   */
+  async function openAttachment(r: Reply, url: string) {
+    const known = attachedPictureKnown(url);
+    // Not asked yet: the forum's type decides, and the answer takes a round trip.
+    if (known === undefined) notify("attachment-open", "正在打开附件…");
+    const picture = known ?? (await attachmentIsPicture(url));
+    if (picture) {
+      openPostImage(r, url, url);
+      return;
+    }
+    const file = attachmentLinks(r.body).find((a) => absoluteUrl(a.url, HOST) === url);
+    void downloadAttachment(url, file?.name ?? "附件");
+  }
+
+  /** Loads the first pictures a page's floors will draw, in reading order, so their bytes are in
+   *  memory while the text lays itself out instead of one round trip after the words appear. The
+   *  faces of the floors are left to their own `Avatar`s (small, and drawn at once), and the rest
+   *  of a page's pictures ask for themselves as the view reaches them. */
+  function warmPageImages(list: Reply[]): void {
+    const urls: string[] = [];
+    for (const r of list) {
+      for (const m of bodyHtml(r).matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
+        if (m[1]) urls.push(m[1]);
+        if (urls.length >= 10) break;
+      }
+      if (urls.length >= 10) break;
+    }
+    warmImages(urls, 10);
+  }
+
   // The pictures a reply shows (block images carry the original in `title`), so a
   // floor's header can offer a reliable "view pictures" entry — the text view's
   // own image press does not fire on the tablet.
@@ -286,6 +328,17 @@ export function Thread(props: {
 
   // True until the first reply page has loaded (or failed), so the thread shows a spinner instead of blank.
   const firstLoad = signal(true);
+  // A first page that is still missing after a few seconds says "slow", not "broken"; the
+  // spinner and the data-driven failure/retry below are unchanged.
+  const slowFirst = signal(false);
+  let slowFirstTimer: ReturnType<typeof setTimeout> | null = null;
+  function markSlowFirst(on: boolean) {
+    if (slowFirstTimer) { clearTimeout(slowFirstTimer); slowFirstTimer = null; }
+    if (on) slowFirstTimer = setTimeout(() => slowFirst.set(true), 4000);
+    else slowFirst.set(false);
+  }
+  markSlowFirst(true);
+  cleanup(() => { if (slowFirstTimer) clearTimeout(slowFirstTimer); });
   // Pull-to-refresh on the reply list (at the top): reload this thread's pages.
   const refreshingThread = signal(false);
 
@@ -300,6 +353,10 @@ export function Thread(props: {
   // A press on a floor's avatar: first a "短信息" button, then the message sheet.
   const pmTarget = signal<{ id: string; name: string } | null>(null);
   const pmWriting = signal(false);
+  // The floor whose body is open for character-precise selection (`null`: none): a long press on a
+  // body puts the floor's plain text in a native read-only input in its own place, where the
+  // platform's own handles move by character; a press outside it puts the rich body back.
+  const inlineSelect = signal<number | null>(null);
 
   // A scroll pauses a video playing in the thread, so it never plays on off screen. Throttled:
   // the pause reaches the page at most a few times a second while the finger keeps moving.
@@ -320,8 +377,12 @@ export function Thread(props: {
         more.set(merged.more);
         page.set(n);
         failedPage.set(null);
+        // The page's pictures are warmed now, in parallel with the layout that draws them: the
+        // text arrives first and the pictures fill in, which is what the reader was waiting for.
+        warmPageImages(merged.items);
         if (n === 1) {
           firstLoad.set(false);
+          markSlowFirst(false);
           // A fresh thread starts at the top with its title showing. The transform cache is KEPT:
           // a cached reply page carries the same bodies, so re-transforming every reply on each
           // open only made opening a thread slower. It is cleared when a reply, edit or delete
@@ -338,7 +399,7 @@ export function Thread(props: {
       })
       .catch((e) => {
         failedPage.set(n);
-        if (n === 1) firstLoad.set(false);
+        if (n === 1) { firstLoad.set(false); markSlowFirst(false); }
       })
       .finally(() => {
         loadingMore = false;
@@ -691,6 +752,7 @@ export function Thread(props: {
           on the bar's 44pt; it drags the window where nothing presses. With no bar, it keeps the top inset. */}
       <View
         desktop={{ windowDrag: true }}
+        onPress={inlineSelect() !== null ? () => inlineSelect.set(null) : undefined}
         style={{
           // The bar floats over the body in both orientations, so it can slide away on scroll and
           // let the text take its place.
@@ -761,6 +823,9 @@ export function Thread(props: {
               () => profileTarget.set({ uid: item().author.id, name: item().author.name, avatar: item().author.avatar })
             }
             meta={`#${item().seq} · ${timeAgo(item().at)}`}
+            // A press anywhere in a floor that the text's own input did not take puts the rich
+            // body back: that is how the selection ends — no button to hunt for.
+            onPress={inlineSelect() !== null ? () => inlineSelect.set(null) : undefined}
             highlighted={() => hovered() === item().seq}
             onHoverIn={() => hovered.set(item().seq)}
             onHoverOut={() => {
@@ -788,17 +853,26 @@ export function Thread(props: {
               </View>
             }
             body={
-              // The text is selectable in place: with each `<br>` split into its own
-              // paragraph (see `splitBrIntoParagraphs`), a long press lands on the right
-              // line and the two handles drag freely. The selection color and the handle
-              // color are one — set through `classes`, as only a class reaches it.
-              <View style={{ gap: 12, alignSelf: "stretch" }}>
+              // A long press on the body opens it for character-precise selection: the rich body
+              // (pictures and markup with it) gives way to a read-only native input in the same
+              // place, where the platform's own handles move character by character — what the
+              // text view's selection does not do on Android. A press anywhere else puts the rich
+              // body back (see `onPress` above).
+              inlineSelect() === item().seq ? (
+                <InlineTextSelect
+                  text={htmlToText(bodyHtml(item()))}
+                  onDone={() => inlineSelect.set(null)}
+                />
+              ) : (
+              <View
+                onLongPress={() => inlineSelect.set(item().seq)}
+                style={{ gap: 12, alignSelf: "stretch" }}
+              >
                 <TextView
-                  html={bodyHtml(item())}
-                  selectable={true}
+                  html={drawnBody(item())}
+                  selectable={false}
                   styles={{
                     root: { fontSize: displaySettings().body, lineHeight: Math.round(displaySettings().body * displaySettings().spacing) },
-                    ...LINE_STYLES,
                     ...(item().seq === 1 ? OP_TITLE_STYLES : {}),
                   }}
                   classes={{ root: "selection:bg-blue-500" }}
@@ -824,16 +898,17 @@ export function Thread(props: {
                       return;
                     }
                     // A picture, or a Discuz attachment that is really an image, opens the zoomable viewer.
-                    if (/\.(?:jpg|jpeg|png|gif|webp|bmp)(?:[?#]|$)/i.test(url) || isAttachmentUrl(url)) {
+                    if (isAttachmentUrl(url)) {
+                      void openAttachment(item(), url);
+                      return;
+                    }
+                    if (/\.(?:jpg|jpeg|png|gif|webp|bmp)(?:[?#]|$)/i.test(url)) {
                       openPostImage(item(), url, url);
                       return;
                     }
                     const tid = threadIdFromLink(url);
                     if (tid && props.onOpenThread) {
                       props.onOpenThread(tid);
-                    } else if (isAttachmentUrl(url)) {
-                      const file = attachmentLinks(item().body).find((a) => absoluteUrl(a.url, HOST) === url);
-                      void downloadAttachment(url, file?.name ?? "download");
                     } else {
                       void openLink(url);
                     }
@@ -844,17 +919,21 @@ export function Thread(props: {
                     and opens it outside — the site's own app when one is registered for the
                     link, the browser otherwise, the system player for a video file. */}
               </View>
+              )
             }
           />
         )}
       </List>
-      {/* Loading and failure show centred over the list (which is empty while they show). */}
+      {/* While the first page is on the wire, the thread's own shape is drawn: the floors it is
+          about to hold, at their height, so the page settles into place instead of jumping from a
+          spinner. The line under the spinner says how it is going (a slow link is named). */}
       {firstLoad() && replies().length === 0 && failedPage() === null ? (
-        <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-          <View style={{ alignItems: "center", paddingVertical: 16, gap: 8 }}>
+        <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, pointerEvents: "none" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 2, paddingLeft: 6 }}>
             <LoadingBar />
-            <Text style={{ fontSize: 12, color: palette().muted }}>正在加载帖子…</Text>
+            <Text style={{ fontSize: 12, color: palette().muted }}>{slowFirst() ? "网络较慢，正在加载…" : "正在加载帖子…"}</Text>
           </View>
+          <ThreadSkeleton rows={3} />
         </View>
       ) : null}
       {/* A press on an avatar offers a private message; the sheet writes it. */}

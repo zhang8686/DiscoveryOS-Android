@@ -1,5 +1,5 @@
 import { expect, test } from "nsh/test";
-import { linkifyBareUrls, htmlToText, parsePmConversation, parsePmUsers, absolutize, floorFromLink, captureGroups, htmlDecode, parseBookmarks, parseChannels, parseNotices, parseMyReplies, parseMyThreads, unescapeNumericEntities, parsePosts, parseProfile, parseReplies, parseSearchResults, parseUser, mergePage, fixImages, removePercentEncoding, trimLeadingBlanks, threadIdFromLink, parseThreadPageInfo, parseLastPage } from "./parse";
+import { linkifyBareUrls, htmlToText, parsePmConversation, parsePmUsers, absolutize, floorFromLink, captureGroups, htmlDecode, parseBookmarks, parseChannels, parseNotices, parseMyReplies, parseMyThreads, unescapeNumericEntities, parsePosts, parseProfile, parseReplies, parseSearchResults, parseUser, mergePage, fixImages, removePercentEncoding, trimLeadingBlanks, threadIdFromLink, parseThreadPageInfo, parseLastPage, showAttachedPictures } from "./parse";
 
 test("captureGroups returns one match's groups, or every whole match", () => {
   expect(captureGroups("a1b", "a(\\d)b", true)).toEqual(["1"]);
@@ -74,6 +74,33 @@ test("parses threads from a forum page", () => {
 test("parses a channel row with no new posts", () => {
   const html = '<tr><td><a href="forumdisplay.php?fid=5">Plain</a><p>only text</p></td></tr>';
   expect(parseChannels(html)).toEqual([{ id: "5", title: "Plain", description: "only text", newPosts: 0 }]);
+});
+
+test("reads the agree mark and board colour, without mistaking agree.gif for an attachment", () => {
+  const row = '<tr><td><span><a href="viewthread.php?tid=77" style="color:#3C9D40">Awarded</a></span>' +
+    '<img src="agree.gif" class="attach" alt="帖子被加分" title="帖子被加分">' +
+    '<a href="space.php?uid=7">someone</a><em>2026-11-22</em>' +
+    '<td class="nums"><strong>15</strong>/<em>796</em></td>' +
+    'space.php?username=bob">Bob</a>lastpost">2026-11-22</a></tr>';
+  const posts = parsePosts(`<table>${row}</table>`, "lastpost", "2");
+  expect(posts[0].agreed).toBe(true);
+  expect(posts[0].fid).toBe("2");
+  expect(posts[0].color).toBe("#3C9D40");
+  expect(posts[0].views).toBe(796);
+  expect(posts[0].hasImages).toBeUndefined();
+});
+
+test("reads a highlighted title colour from an absolute URL with layered <a> tags", () => {
+  const row = '<tr><td><span id="thread_9">' +
+    '<a href="https://www.4d4y.com/forum/viewthread.php?tid=9" style="font-weight:bold;color:#FF0000">Hot</a>' +
+    '<a href="https://www.4d4y.com/forum/viewthread.php?tid=9" title="new window">t</a>' +
+    '</span><a href="https://www.4d4y.com/forum/space.php?uid=7">u</a><em>2026-11-22</em>' +
+    '<td class="nums"><strong>3</strong>/<em>12</em></td>' +
+    'https://www.4d4y.com/forum/space.php?username=bob">Bob<lastpost">Bob</tr>';
+  const posts = parsePosts(`<table>${row}</table>`);
+  expect(posts.length).toBe(1);
+  expect(posts[0].color).toBe("#FF0000");
+  expect(posts[0].title).toBe("Hot");
 });
 
 test("parses replies from a thread page", () => {
@@ -460,4 +487,28 @@ test("a link the forum already wrote is not wrapped a second time", () => {
 test("an ampersand in a typed link is escaped in the href, not in the text", () => {
   expect(linkifyBareUrls("https://x.com/a?b=1&c=2")).toBe(
     '<a href="https://x.com/a?b=1&amp;c=2">https://x.com/a?b=1&c=2</a>');
+});
+
+test("draws an attached picture in place of its download line", () => {
+  const block =
+    '<div class="t_attach" id="aid12">\n<a href="https://www.4d4y.com/forum/attachment.php?aid=12">下载</a> (310.76 KB)\n<div class="t_smallfont">2026-11-22 15:57</div>\n\n</div>';
+  const picture =
+    '<p><a href="https://www.4d4y.com/forum/attachment.php?aid=12"><img src="https://www.4d4y.com/forum/attachment.php?aid=12" width="100%"></a></p>';
+  expect(showAttachedPictures(block, () => true)).toBe(picture);
+  // A file is not a picture: the download stays what it was.
+  expect(showAttachedPictures(block, () => false)).toBe(block);
+});
+
+test("keeps the download of a picture the post already shows", () => {
+  const html =
+    '<p><img id="aimg_12" src="attachments/a.jpg"></p>\n<div class="t_attach" id="aid12"><a href="https://www.4d4y.com/forum/attachment.php?aid=12">下载</a></div>';
+  expect(showAttachedPictures(html, () => true)).toBe(html);
+});
+
+test("draws a bare attachment link that is a picture", () => {
+  const html = '看图：<a href="https://www.4d4y.com/forum/attachment.php?aid=7">a.jpg</a>';
+  const picture =
+    '<p><a href="https://www.4d4y.com/forum/attachment.php?aid=7"><img src="https://www.4d4y.com/forum/attachment.php?aid=7" width="100%"></a></p>';
+  expect(showAttachedPictures(html, () => true)).toBe(`看图：${picture}`);
+  expect(showAttachedPictures(html, () => false)).toBe(html);
 });

@@ -7,13 +7,15 @@ import { ShortcutsHelp } from "./ShortcutsHelp";
 import { shortcutRows, useCommand } from "./commands";
 import { DEMO, clearReplyPageCache, loadBookmarks, loadChannels, loadMyReplies, loadMyThreads, loadPmUsers, loadPosts, loadReplyPage, searchThreads, loadNotices} from "../discuz/forum";
 import { avatarUrlForUid } from "../discuz/avatarUrl";
-import { userAvatar } from "../discuz/avatarCache";
+import { clearResolvedAvatars, userAvatar } from "../discuz/avatarCache";
 import { loadNoticeCounts, markNoticesRead } from "../discuz/notifications";
-import { cleanChannelTitle, mergePage, parseChannels, type Channel, type Post } from "../discuz/parse";
+import { cleanChannelTitle, mergePage, parseChannels, type Channel, type Post, type Reply, absolutize, fixDiscuzMarkup, fixImages, HOST_BASE } from "../discuz/parse";
 import { BUILTIN_CHANNELS, mergeChannels } from "../discuz/channels";
 import { Thread } from "./Thread";
 import { NewThread } from "./NewThread";
 import { Conversation } from "./Conversation";
+import { bodyPicturePx, clearWarmedImages, warmImages } from "./imageWarm";
+import { clearAttachedPictures } from "./attachPictures";
 import { LoadingBar } from "./LoadingBar";
 import { channelIcon } from "./channelIcon";
 import { PencilIcon, RefreshIcon, SidebarIcon } from "./icons";
@@ -22,6 +24,7 @@ import { hint } from "./Hint";
 import { palette } from "./appearance";
 import { loadLastPlace, saveLastPlace } from "./lastPlace";
 import { Placeholder } from "./Placeholder";
+import { ListSkeleton } from "./Skeleton";
 import { PixelDino } from "./PixelArt";
 import { displaySettings } from "./settings";
 import { notify } from "./toast";
@@ -89,6 +92,93 @@ function compactCount(n: number): string {
 /** A row of the threads column: a section's title, or a thread. */
 type ListRow = { kind: "header"; title: string } | { kind: "post"; post: Post };
 type HistoryRow = ListRow;
+
+// Forum rows carry a uid, so their picture URL is built without a request. Only name-only rows
+// (favorites, notices, search) need a profile lookup. Warm the first screen eagerly, then resolve
+// the rest as rows come into view: a 300-row list used to queue 300 profile requests on open,
+// all competing with the first page's HTML and pictures for the connection.
+const AVATAR_EAGER_ROWS = 20;
+function warmAvatarNames(ps: Post[]): void {
+  untracked(() => {
+    for (const p of ps) if (!p.uid) resolveAvatarByName(avatarName(p));
+  });
+}
+function onRowsViewable(info: { viewableItems: { item: ListRow }[] }): void {
+  untracked(() => {
+    for (const v of info.viewableItems) {
+      if (v.item.kind !== "post") continue;
+      if (!v.item.post.uid) resolveAvatarByName(avatarName(v.item.post));
+      // The row is on screen, so it is a tap away: fetching its first reply page now is what makes
+      // the tap open at once instead of waiting on the network (see `warmThreadPage`).
+      warmThreadPage(v.item.post.id);
+    }
+  });
+}
+
+// Opening a thread waits on its first reply page. That page is fetched ahead for the rows on
+// screen — one at a time, a moment after the list has painted — so the open is served from
+// `loadReplyPage`'s cache. Bounded per list (a browse warms a handful of pages, not the column),
+// and `loadReplyPage` itself answers from its cache without a request when it already has one.
+const WARM_LIMIT = 6;
+let warmBudget = WARM_LIMIT;
+let warmReadyAt = 0;
+let warmRunning = false;
+const warmQueue: string[] = [];
+const warmQueued = new Set<string>();
+
+/** A fresh list starts a fresh warm-up, held back a moment so the first screen paints first. */
+function resetThreadWarm(): void {
+  warmBudget = WARM_LIMIT;
+  warmReadyAt = Date.now() + 700;
+  warmRunning = false;
+  warmQueue.length = 0;
+  warmQueued.clear();
+}
+
+function warmThreadPage(tid: string): void {
+  if (DEMO || !tid || warmBudget <= 0 || warmQueued.has(tid)) return;
+  warmQueued.add(tid);
+  warmQueue.push(tid);
+  pumpThreadWarm();
+}
+
+function pumpThreadWarm(): void {
+  if (warmRunning) return;
+  const tid = warmQueue.shift();
+  if (!tid) return;
+  const wait = warmReadyAt - Date.now();
+  if (wait > 0) {
+    warmQueue.unshift(tid);
+    setTimeout(pumpThreadWarm, wait);
+    return;
+  }
+  warmRunning = true;
+  warmBudget--;
+  void loadReplyPage(tid, 1)
+    .then((page) => warmPagePictures(page.replies))
+    .catch(() => undefined)
+    .finally(() => {
+      warmRunning = false;
+      // Spaced out: a warm-up must never become the reason the next picture is slow.
+      setTimeout(pumpThreadWarm, 180);
+    });
+}
+
+/** The first pictures a pre-fetched page draws, loaded now: the tap that opens this thread then
+ *  finds both its words and its pictures in memory instead of waiting on the first round trips.
+ *  Only the first few — a page's later pictures are warmed when the page is actually shown. */
+function warmPagePictures(replies: Reply[]): void {
+  const px = bodyPicturePx();
+  const urls: string[] = [];
+  for (const r of replies) {
+    for (const m of absolutize(fixDiscuzMarkup(fixImages(r.body, px)), HOST_BASE).matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
+      if (m[1]) urls.push(m[1]);
+      if (urls.length >= 4) break;
+    }
+    if (urls.length >= 4) break;
+  }
+  warmImages(urls, 4);
+}
 
 /** The thread a row shows. A title row has none: it is never drawn as a thread, so the empty
  * thread here only keeps the types whole. */
@@ -844,6 +934,16 @@ export function Forum(props: {
   // the column shows placeholder rows in place of the list. `listRequest` drops answers
   // that were overtaken by a later pick.
   const listLoading = signal(false);
+  // Set when page 1 is still absent after a few seconds. The skeleton stays up (with its rows
+  // reserved) and a plain hint tells the reader the connection is slow rather than broken;
+  // it never replaces the data-driven retry, which still fires on a real failure.
+  const slowList = signal(false);
+  let slowListTimer: ReturnType<typeof setTimeout> | null = null;
+  function markSlowList(on: boolean) {
+    if (slowListTimer) { clearTimeout(slowListTimer); slowListTimer = null; }
+    if (on) slowListTimer = setTimeout(() => slowList.set(true), 4000);
+    else slowList.set(false);
+  }
   // True while page 1 of the open list is fetched, cached or not: the refresh icon spins.
   const refreshing = signal(false);
   // The list's own pull spinner: only a real pull gesture shows it. Page 1 also loads when a
@@ -905,27 +1005,16 @@ export function Forum(props: {
           animateSearchChange();
           searchOpen.set(false);
         }
-        // Warm the first few reply pages after the list settles, one at a time: enough that opening
-        // one of the first rows is instant, gentle enough not to compete with the list's own
-        // pictures and avatars for the connection.
-        if (n === 1 && !DEMO) {
-          setTimeout(() => {
-            let i = 0;
-            const next = () => {
-              if (i >= Math.min(5, list.length)) return;
-              const p = list[i++];
-              if (!p.id) { next(); return; }
-              void loadReplyPage(p.id, 1).finally(() => setTimeout(next, 80));
-            };
-            next();
-          }, 350);
-        }
+        // A new list means new rows to warm: the queue starts over, and the pages fetched ahead
+        // are the ones the reader is looking at (see `onRowsViewable`), not the list's first three.
+        if (n === 1) resetThreadWarm();
       })
       .catch((e) => {
         if (request !== listRequest) return;
         if (n === 1) {
           notify("list", "帖子加载失败，点此重试。", () => {
             listLoading.set(true);
+            markSlowList(true);
             fetchList(load, 1, key);
           });
           return;
@@ -942,6 +1031,7 @@ export function Forum(props: {
       })
       .finally(() => {
         listLoading.set(false);
+        if (n === 1 && request === listRequest) markSlowList(false);
         if (n === 1) {
           // An overtaken page-1 load must not stop the spinner owned by the newer one.
           if (request === listRequest) { refreshing.set(false); pullRefreshing.set(false); }
@@ -1012,6 +1102,7 @@ export function Forum(props: {
     moreFailures = 0;
     moreError.set(null);
     listLoading.set(!cached);
+    markSlowList(!cached);
     fetchList(load, 1, key);
   }
 
@@ -1324,6 +1415,7 @@ export function Forum(props: {
       return true;
     }),
   );
+  cleanup(() => { if (slowListTimer) clearTimeout(slowListTimer); });
 
   // The search control, in the title bar or, where the platform draws none, the threads column's header.
   const searchProps: SearchProps = {
@@ -1511,8 +1603,14 @@ export function Forum(props: {
   effect(() => {
     const signedIn = !!props.user();
     untracked(() => {
-      // Thread pages are per account too: sign-in and sign-out both drop them.
+      // Thread pages are per account too: sign-in and sign-out both drop them. The pages fetched
+      // ahead and their pictures go with them, so nothing warmed under one account is served to
+      // the next.
       clearReplyPageCache();
+      clearResolvedAvatars();
+      clearAttachedPictures();
+      clearWarmedImages();
+      resetThreadWarm();
       if (!signedIn) {
         listRequest++;
         // Search needs an account: its field and results go with the sign-out.
@@ -1590,16 +1688,15 @@ export function Forum(props: {
 
   // One personal-section row: a line icon, a label and a 48dp touch target.
   // These stay visible when signed out; tapping offers the sign-in sheet.
-  // Avatars for name-only rows (favorites, my threads): resolve each once when the
-  // list changes. userAvatar dedups and caches, and untracked keeps this effect from
-  // re-running when the names resolve.
+  // Avatars for name-only rows (favorites, my threads): warm the first screen once when the
+  // list changes; rows scrolled into view are warmed by onRowsViewable on the list itself.
+  // userAvatar dedups and caches, and untracked keeps this effect from re-running when the
+  // names resolve.
   effect(() => {
     const ps = posts();
-    untracked(() => {
-      for (const p of ps) if (!p.uid) resolveAvatarByName(avatarName(p));
-      // "My replies" rows carry no poster at all; they fall back to my own avatar.
-      if (props.user()) resolveAvatarByName(props.user() ?? undefined);
-    });
+    warmAvatarNames(ps.slice(0, AVATAR_EAGER_ROWS));
+    // "My replies" rows carry no poster at all; they fall back to my own avatar.
+    if (props.user()) resolveAvatarByName(props.user() ?? undefined);
   });
 
   function requireSignIn(action: () => void) {
@@ -1899,7 +1996,7 @@ export function Forum(props: {
           <Text style={{ fontSize: 14, fontWeight: 600, color: palette().text, flex: 1 }}>{headerTitle()}</Text>
         </View>
         {listLoading() ? (
-          <View style={{ padding: 16, alignItems: "center" }}><LoadingBar /></View>
+          <ListSkeleton rows={7} title={slowList() ? "网络较慢，正在加载…" : "正在加载帖子…"} />
         ) : nothingPicked() ? (
           <Placeholder title="选择一个版块以查看帖子。" />
         ) : (
@@ -1907,6 +2004,7 @@ export function Forum(props: {
             style={{ flex: 1 }}
             contentStyle={{ padding: 6, gap: 3 }}
             each={listRows()}
+            onViewableItemsChange={onRowsViewable}
             ref={(n: ListRef | null) => { paneThreadsList = n ?? undefined; }}
             onScroll={rememberViewport}
             onScrollEnd={onListScrollEnd}
@@ -2236,9 +2334,7 @@ export function Forum(props: {
             <Text style={{ fontSize: 13, color: palette().muted, textAlign: "center", padding: 16 }}>你打开过的帖子会显示在这里。</Text>
           ) : null}
           {listLoading() ? (
-            <View style={{ flex: 1, alignItems: "center", paddingTop: 28 }}>
-              <LoadingBar />
-            </View>
+            <ListSkeleton rows={9} title={slowList() ? "网络较慢，正在加载…" : "正在加载帖子…"} />
           ) : nothingPicked() ? (
             <Placeholder
               title="选择一个版块以查看帖子。"
@@ -2255,6 +2351,7 @@ export function Forum(props: {
             style={{ flex: 1 }}
             contentStyle={{ padding: 6, gap: 3 }}
             each={listRows()}
+            onViewableItemsChange={onRowsViewable}
             ref={(n: ListRef | null) => { threadsList = n ?? undefined; columnThreadsList = n ?? undefined; }}
             onScroll={rememberViewport}
             onScrollEnd={onListScrollEnd}

@@ -16,11 +16,16 @@ export function ReplyCard(props: {
   body: JSX.Element;
   /** Whether the post is highlighted (the pointer is over it, so `q` quotes it). */
   highlighted?: () => boolean;
+  /** A press on the card, outside whatever its body handles itself (e.g. to close the body's
+   *  character-precise selection). The innermost view that hears presses takes one, then the
+   *  card does. */
+  onPress?: () => void;
   onHoverIn?: () => void;
   onHoverOut?: () => void;
 }) {
   return (
     <View
+      onPress={props.onPress}
       onMouseEnter={props.onHoverIn}
       onMouseLeave={props.onHoverOut}
       style={{

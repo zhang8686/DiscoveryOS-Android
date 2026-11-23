@@ -10,6 +10,7 @@ export async function fetchGbRequest(
   url: string,
   body?: string,
   cookie?: string,
+  timeoutMs?: number,
 ): Promise<{ html: string; setCookies: string[]; url: string }> {
   const { response, bytes } = await fetchLogged(
     url,
@@ -23,6 +24,7 @@ export async function fetchGbRequest(
       body,
     },
     (b) => Gb18030.decode(b),
+    timeoutMs,
   );
   if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
   const html = Gb18030.decode(bytes);

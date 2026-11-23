@@ -2,8 +2,14 @@ import { formEncodeGb, fetchGbRequest, htmlEntities, postFormGb, postGbNoRedirec
 import { absorbSetCookie, clearCookies, cookieHeader } from "./cookies";
 import { flushVault } from "./vault";
 import { htmlDecode, parseLoginQuestions } from "./parse";
+import { discuzPassword } from "./md5";
 
 export const HOST = "https://www.4d4y.com/forum/";
+
+/** Login gets its own deadlines. A slow config page must never masquerade as "登录失败". */
+const LOGIN_TIMEOUT_MS = 20_000;
+const LOGIN_VERIFY_MS = 15_000;
+const CONFIG_TIMEOUT_MS = 8_000;
 
 const LOGIN_REQUIRED = '<select name="loginfield" id="loginfield">';
 const LOGOUT_LINK = /href="logging\.php\?action=logout&amp;formhash=([^"]+)"/;
@@ -45,7 +51,7 @@ export function isLoginRequired(html: string): boolean {
 export async function request(
   method: "GET" | "POST",
   path: string,
-  options: { query?: [string, string][]; form?: [string, string][]; retry?: boolean; cookie?: string } = {},
+  options: { query?: [string, string][]; form?: [string, string][]; retry?: boolean; cookie?: string; timeoutMs?: number } = {},
 ): Promise<string> {
   const { retry = true } = options;
   try {
@@ -60,14 +66,14 @@ export async function request(
 async function requestOnce(
   method: "GET" | "POST",
   path: string,
-  options: { query?: [string, string][]; form?: [string, string][]; retry?: boolean; cookie?: string } = {},
+  options: { query?: [string, string][]; form?: [string, string][]; retry?: boolean; cookie?: string; timeoutMs?: number } = {},
 ): Promise<string> {
-  const { query, form, retry = true, cookie } = options;
+  const { query, form, retry = true, cookie, timeoutMs } = options;
   const qs = query?.map(([k, v]) => `${formEncodeGb(k)}=${formEncodeGb(v)}`).join("&");
   const url = HOST + path + (qs ? (path.includes("?") ? "&" : "?") + qs : "");
   const body = method === "POST" && form ? form.map(([k, v]) => `${formEncodeGb(k)}=${formEncodeGb(v)}`).join("&") : undefined;
   const headerCookie = [cookieHeader(), cookie].filter(Boolean).join("; ") || undefined;
-  const { html, setCookies } = await fetchGbRequest(method, url, body, headerCookie);
+  const { html, setCookies } = await fetchGbRequest(method, url, body, headerCookie, timeoutMs);
   absorbSetCookie(setCookies);
   // Every signed-in page carries a fresh form hash; keep the latest so writes don't use a stale one.
   if (formHash) {
@@ -76,7 +82,7 @@ async function requestOnce(
   }
   if (retry && isLoginRequired(html) && session) {
     const relogged = await reLogin(session.name, session.pass, session.questionId, session.answer);
-    if (relogged) return request(method, path, { query, form, retry: false, cookie });
+    if (relogged) return request(method, path, { query, form, retry: false, cookie, timeoutMs });
   }
   return html;
 }
@@ -96,28 +102,120 @@ export async function findFloor(tid: string, pid: string): Promise<{ html: strin
   return { html, page: Number(new URL(url).searchParams.get("page")) || 1 };
 }
 
-async function dologin(name: string, pass: string, questionId = 0, answer = ""): Promise<string | undefined> {
-  // A member who set a security question must answer it at login; the form posts the question's
-  // id (0 when there is none) and the answer.
+/** The hidden values the site's own login form posts alongside the credentials. */
+type LoginMeta = { hash?: string; sid?: string };
+
+// The dialog reads this page for its security questions, and the POST needs the
+// same hash and sid. One short-lived copy serves both instead of fetching it twice.
+let loginPage: { html: string; at: number } | null = null;
+
+async function readLoginPage(): Promise<string> {
+  if (loginPage && Date.now() - loginPage.at < 60_000) return loginPage.html;
+  const html = await request("GET", "logging.php?action=login", { retry: false, timeoutMs: LOGIN_TIMEOUT_MS });
+  loginPage = { html, at: Date.now() };
+  return html;
+}
+
+/** Reads the login page so the POST carries a fresh form hash and sid, as a browser's does. */
+async function loadLoginMeta(force = false): Promise<LoginMeta> {
+  if (force) loginPage = null;
+  try {
+    const html = await readLoginPage();
+    return {
+      hash: parseHiddenFormHash(html),
+      sid: /name="sid"\s+value="([^"]+)"/.exec(html)?.[1],
+    };
+  } catch {
+    // Without the form page the POST still has a chance with the session's known hash.
+    return {};
+  }
+}
+
+/** Forgets the cached login form, e.g. before a retry after a timeout. */
+function refreshLoginMeta(): Promise<LoginMeta> { return loadLoginMeta(true); }
+
+/**
+ * Builds the login form exactly as the forum's `loginform` does. Exported so a
+ * test can check the fields without a live forum.
+ */
+export function loginFormFields(
+  name: string,
+  pass: string,
+  meta: LoginMeta,
+  questionId = 0,
+  answer = "",
+): [string, string][] {
+  // `pwmd5()` in the page's inline script replaces the field with
+  // `hex_md5(addslashes(password))`; Discuz checks md5(md5(password) . salt).
   const form: [string, string][] = [
     ["username", name],
-    ["password", pass],
+    ["password", discuzPassword(pass)],
+    ["loginfield", "username"],
     ["loginsubmit", "true"],
+    // A persistent login (30 days, the web form's "记住登录" cookietime): without
+    // it Discuz issues a session-only cookie, and a launch the next day asks again.
     ["cookietime", "2592000"],
+    ["referer", ""],
   ];
+  if (meta.hash) form.push(["formhash", meta.hash]);
+  if (meta.sid) form.push(["sid", meta.sid]);
+  // A member who set a security question must answer it; field 0 posts none.
   if (questionId > 0) {
     form.push(["questionid", String(questionId)]);
     form.push(["answer", answer]);
   }
-  const html = await request("POST", "logging.php?action=login&loginsubmit=yes", {
-    // Ask for a persistent login (30 days — the web form's "记住登录" cookietime).
-    // Without it Discuz issues a session-only auth cookie; since Android never
-    // stores the password, that cookie lapsing is why a launch the next day asked
-    // for the login again.
-    form,
-    retry: false,
-  });
-  return parseFormHash(html);
+  return form;
+}
+
+const isTimeout = (e: unknown): boolean => e instanceof Error && e.message.startsWith("请求超时");
+
+/**
+ * The member's own form hash, read from a page served after the auth cookie was
+ * set. A GET is safe to repeat, so a slow member page gets one more chance here
+ * instead of re-posting the credentials.
+ */
+async function verifyLogin(): Promise<string | undefined> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const page = await request("GET", "my.php", {
+        query: [["item", "threads"]],
+        retry: false,
+        timeoutMs: LOGIN_VERIFY_MS,
+      });
+      return parseFormHash(page);
+    } catch (e) {
+      if (!isTimeout(e) || attempt === 1) throw e;
+    }
+  }
+  return undefined;
+}
+
+async function dologin(name: string, pass: string, questionId = 0, answer = ""): Promise<string | undefined> {
+  // A POST is never retried by `request`: doing it with a stale form hash only
+  // wastes another attempt. A timeout is retried once with a freshly read form.
+  let posted = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const meta = await loadLoginMeta();
+    const form = loginFormFields(name, pass, meta, questionId, answer);
+    try {
+      await request("POST", "logging.php?action=login&loginsubmit=yes", {
+        form,
+        retry: false,
+        timeoutMs: LOGIN_TIMEOUT_MS,
+      });
+      posted = true;
+      break;
+    } catch (e) {
+      if (!isTimeout(e) || attempt === 1) throw e;
+      // The first attempt may have reached the server just as the deadline passed:
+      // a fresh form keeps the retry from using a stale hash/sid.
+      await refreshLoginMeta();
+    }
+  }
+  if (!posted) return undefined;
+  // `requestOnce` has already absorbed the auth cookies from the reply here.
+  // The forum's member page — not the login reply's guest hash — is the proof.
+  return await verifyLogin();
 }
 
 // The login in progress, if any. Requests that find the login page while one runs
@@ -137,13 +235,22 @@ function reLogin(name: string, pass: string, questionId?: number, answer?: strin
   return loginInFlight;
 }
 
+/** Reads the posts-per-page setting; a best-effort extra, never part of signing in. */
 async function loadConfig(): Promise<void> {
-  const html = await request("GET", "memcp.php?action=profile&typeid=5");
+  const html = await request("GET", "memcp.php?action=profile&typeid=5", {
+    retry: false,
+    timeoutMs: CONFIG_TIMEOUT_MS,
+  });
   const n = parsePageSize(html);
   if (n) pageSize = n;
 }
 
-/** Logs in; on success keeps the credentials for re-login and loads the config. */
+/**
+ * Logs in; on success keeps the credentials for re-login and loads the config.
+ * Only the member page confirming the session can fail the login: the config
+ * page is deliberately best-effort, so its failure cannot be shown as
+ * "登录失败：请求超时" when the account was accepted.
+ */
 export async function login(name: string, pass: string, questionId = 0, answer = ""): Promise<boolean> {
   const hash = await dologin(name, pass, questionId, answer);
   if (!hash) {
@@ -154,14 +261,9 @@ export async function login(name: string, pass: string, questionId = 0, answer =
   session = { name, pass, questionId, answer };
   signedInName = name;
   formHash = hash;
-  // The login reply still carries the guest form hash. Writes need the member's
-  // own hash, which only appears on a page served after the auth cookie is set.
   try {
-    const page = await request("GET", "my.php", { query: [["item", "threads"]], retry: false });
-    const memberHash = parseFormHash(page);
-    if (memberHash) formHash = memberHash;
-  } catch { /* keep the login hash */ }
-  await loadConfig();
+    await loadConfig();
+  } catch { /* keep the default page size; the account is already signed in */ }
   // The auth cookie must be durable before the app can be backgrounded.
   await flushVault();
   return true;
@@ -170,8 +272,7 @@ export async function login(name: string, pass: string, questionId = 0, answer =
 /** The security questions the login page offers, in its order; empty when the page has none. */
 export async function loadLoginQuestions(): Promise<{ id: number; text: string }[]> {
   try {
-    const html = await request("GET", "logging.php?action=login", { retry: false });
-    return parseLoginQuestions(html);
+    return parseLoginQuestions(await readLoginPage());
   } catch {
     return [];
   }

@@ -48,10 +48,19 @@ export async function loadChannels(): Promise<Channel[]> {
 /** Sort by thread start ("dateline") or last reply ("lastpost"), newest first. */
 export type SortOrder = "dateline" | "lastpost";
 
-export async function loadPosts(fid: string, page = 1, order: SortOrder = "lastpost"): Promise<Post[]> {
-  if (DEMO) return DEMO_POSTS.filter((p) => order === "dateline" ? true : true)
+// A channel can be opened again (or refreshed) while its first page is still on the wire.
+// Sharing the in-flight request saves a full GB18030 page download and, more importantly,
+// stops the late answer from racing the newer one. Demo data is local and needs no sharing.
+const postPageInFlight = new Map<string, Promise<Post[]>>();
+
+export function loadPosts(fid: string, page = 1, order: SortOrder = "lastpost"): Promise<Post[]> {
+  if (DEMO) return Promise.resolve(DEMO_POSTS
+    .slice()
     .sort((a, b) => (order === "dateline" ? String(b.at ?? "") : String(b.lastReplyAt ?? ""))
-      .localeCompare(order === "dateline" ? String(a.at ?? "") : String(a.lastReplyAt ?? "")));
+      .localeCompare(order === "dateline" ? String(a.at ?? "") : String(a.lastReplyAt ?? ""))));
+  const key = `${fid}:${page}:${order}:${pageSize}`;
+  const pending = postPageInFlight.get(key);
+  if (pending) return pending;
   const query: [string, string][] = [
     ["fid", fid],
     ["page", String(page)],
@@ -59,8 +68,13 @@ export async function loadPosts(fid: string, page = 1, order: SortOrder = "lastp
     ["filter", order === "lastpost" ? "2592000" : ""],
     ["ppp", String(pageSize)],
   ];
-  const html = await request("GET", "forumdisplay.php", { query });
-  return parsePosts(html, order);
+  const requestPage = request("GET", "forumdisplay.php", { query })
+    .then((html) => parsePosts(html, order, fid))
+    .finally(() => {
+      if (postPageInFlight.get(key) === requestPage) postPageInFlight.delete(key);
+    });
+  postPageInFlight.set(key, requestPage);
+  return requestPage;
 }
 
 /**

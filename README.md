@@ -7,7 +7,7 @@
 
 > 本项目为**非官方**客户端，与 4d4y.com、Comsenz / Discuz! 无关联，也未获得其认可或赞助。论坛内容与账号数据归论坛及其用户所有，使用请遵守论坛规则。
 >
-> **最新版本 v1.1.0**（2026-11-22）：更名 DiscoveryOSX 并更换包名；手机与平板通用；正文图片按屏幕像素请求、正文裸网址可点；新增「温暖米色」暖色主题；提醒红点与网页同步。详见 [v1.1.0 更新说明](docs/更新说明-v1.1.0.md)；安装包见 [Releases](https://github.com/zhang8686/DiscoveryOS-Android/releases)。
+> **最新版本 v1.1.6**（2026-11-23）：正文长按就地选字，可拖手柄逐字选取；附件图片在正文直接显示，文件类附件可按真实文件名下载；修复保存图片扩展名错误、分享只发链接的问题。详见 [v1.1.6 更新说明](docs/更新说明-v1.1.6.md)；安装包见 [Releases](https://github.com/zhang8686/DiscoveryOS-Android/releases)。
 
 ---
 
@@ -81,8 +81,8 @@
 
 | 项目 | 数值 |
 | --- | --- |
-| 当前版本 | 1.1.0（versionCode 49） |
-| APK 体积 | 约 19.9 MB（单 arm64-v8a，手机与平板共用） |
+| 当前版本 | 1.1.6（versionCode 55） |
+| APK 体积 | 约 20.3 MB（单 arm64-v8a，手机与平板共用） |
 | 应用自身逻辑包 | 约 471 KB（`assets/nsh/bundle.nshc`，含二维码解码器） |
 | 应用图标 | 约 13 KB |
 | 主要体积来源 | NSH 预编译运行时 `lib/arm64-v8a/libnsh.so`（原始 46.7 MB，Zopfli 压缩后约 19.4 MB） |
@@ -98,14 +98,14 @@
 
 ## 安装
 
-1. 从 [Releases](https://github.com/zhang8686/DiscoveryOS-Android/releases) 下载最新版 `DiscoveryOSX-V1.1.0-release.apk`。**手机和平板下载同一个文件**。
+1. 从 [Releases](https://github.com/zhang8686/DiscoveryOS-Android/releases) 下载最新版 `DiscoveryOSX-V1.1.6-release.apk`。**手机和平板下载同一个文件**。
 2. 在设备上打开该文件；首次安装时系统可能要求为安装来源开启「允许安装未知应用」，授权一次即可。
 3. 系统需为 Android 8.0 及以上，CPU 为 arm64-v8a；32 位设备不在支持范围。
 4. 论坛内容需要登录后查看，请在应用内登录 4d4y 账号。
 
 > **关于包名**：本版包名为 `com.Android.DiscoveryOSX`，与旧版 `com.Android.DiscoveryOS` 是两个独立应用，可以并存；卸载旧版不影响新版。首次安装后需要重新登录一次。
 >
-> 升级时请使用同一签名密钥发布的版本，否则无法覆盖安装。
+> **v1.1.6 起使用新的发布证书**（SHA-256 `7155e75f…2b07`），已安装 v1.1.0 的设备请先卸载旧版再安装；此后版本沿用同一证书即可覆盖升级。
 
 ---
 
@@ -126,7 +126,7 @@ zipalign -P 16 -f 4 build/unsigned.apk build/aligned.apk
 # 4. 签名（v2 + v3）
 apksigner sign --ks keystore/discoveryos-release.jks --ks-key-alias discoveryos \
   --v2-signing-enabled true --v3-signing-enabled true \
-  --out DiscoveryOSX-V1.1.0-release.apk build/aligned.apk
+  --out DiscoveryOSX-V1.1.6-release.apk build/aligned.apk
 ```
 
 检查：
@@ -134,8 +134,8 @@ apksigner sign --ks keystore/discoveryos-release.jks --ks-key-alias discoveryos 
 ```bash
 nsh check                                  # 类型检查
 nsh test                                   # 单元与界面测试
-apksigner verify -v DiscoveryOSX-V1.1.0-release.apk
-zipalign -c -P 16 4 DiscoveryOSX-V1.1.0-release.apk
+apksigner verify -v DiscoveryOSX-V1.1.6-release.apk
+zipalign -c -P 16 4 DiscoveryOSX-V1.1.6-release.apk
 ```
 
 > 若改过 `nsh.json` 的 `name`，产物文件名会随名称变化；打包前先清理 `.nsh/out/`，避免签到上一次的旧包。

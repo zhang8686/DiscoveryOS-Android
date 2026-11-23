@@ -45,15 +45,15 @@ export function ThreadRow(props: {
         gap: 6,
       }}
     >
-      {
-}
       <Avatar size={avatarSide()} radius={7} url={props.avatar()} />
       <View style={{ flex: 1, gap: 2 }}>
-        {}
-        <Text style={{ numberOfLines: 2, fontSize: displaySettings().list, color: props.item().color ?? (props.viewed() ? palette().muted : palette().text), fontWeight: props.viewed() ? 400 : 600 }}>
-          {props.favorite() ? <Text style={{ fontSize: 11, color: palette().muted }}>{"★ "}</Text> : null}
-          {props.item().title}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+          <Text style={{ numberOfLines: 2, fontSize: displaySettings().list, color: props.item().color ?? (props.viewed() ? palette().muted : palette().text), fontWeight: props.viewed() ? 400 : 600, flexShrink: 1 }}>
+            {props.favorite() ? <Text style={{ fontSize: 11, color: palette().muted }}>{"★ "}</Text> : null}
+            {props.item().title}
+          </Text>
+          {props.item().agreed ? <LineIcon name="thumb" size={12} /> : null}
+        </View>
         {}
         {props.item().excerpt !== undefined ? (
           props.item().excerpt ? <Text style={{ fontSize: 12, color: palette().muted }}>{props.item().excerpt}</Text> : null
@@ -72,13 +72,21 @@ export function ThreadRow(props: {
           <Text style={{ fontSize: 11, color: palette().muted }}>{timeAgo((props.item().lastReplyAt ?? props.item().at) ?? "")}</Text>
         </View>
       ) : null}
-      {
-}
-      {props.item().replies === undefined ? null : (
-        <View style={{ width: 46, alignItems: "flex-end" }}>
-          <Text style={{ fontSize: 11, color: palette().muted }}>{String(props.item().replies)} 回复</Text>
-          {}
-          {newRepliesSinceView(props.item().id, props.item().replies) > 0 ? (
+      {(props.item().replies === undefined && props.item().views === undefined) ? null : (
+        <View style={{ width: 52, alignItems: "flex-end", gap: 1 }}>
+          {props.item().views !== undefined ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+              <Text style={{ fontSize: 11, color: palette().muted }}>{String(props.item().views)}</Text>
+              <LineIcon name="eye" size={11} color={palette().muted} />
+            </View>
+          ) : null}
+          {props.item().replies !== undefined ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+              <Text style={{ fontSize: 11, color: palette().muted }}>{String(props.item().replies)}</Text>
+              <LineIcon name="bubble" size={11} color={palette().muted} />
+            </View>
+          ) : null}
+          {props.item().replies !== undefined && newRepliesSinceView(props.item().id, props.item().replies) > 0 ? (
             <Text style={{ fontSize: 10, fontWeight: 600, color: palette().link }}>
               {`+${newRepliesSinceView(props.item().id, props.item().replies)}`}
             </Text>

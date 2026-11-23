@@ -92,7 +92,7 @@ export function ReplyBox(props: {
   async function pickFiles() {
     try {
       const list = await Picker.pickFiles({ multiple: true, limit: 5 });
-      await picked(list.map((p) => p.file));
+      await picked(list.map((p) => p.file).filter((f): f is File => f !== null));
     } catch {
       notify("attach-pick", "无法打开文件选择器。");
     }
