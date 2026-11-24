@@ -577,15 +577,19 @@ export function htmlToText(html: string): string {
 export type TextBlock = { text: string; heading: boolean };
 
 /**
- * The floor's HTML as text blocks, in reading order: a first post's headings (h1–h3, the ones
- * `OP_TITLE_STYLES` sets) keep their own run, and everything else is the body's. A floor without
- * headings — every reply, and a first post whose top is not a heading — is one block, exactly as
- * `htmlToText` gives it.
+ * The floor's HTML as text blocks, in reading order. A first post's headings (h1–h3, the sizes
+ * `OP_TITLE_STYLES` sets) keep a run of their own when `headings` is on; everything else is the
+ * body's, in one block. A floor without headings — every reply, and a first post whose top is not
+ * a heading — is one block, exactly as `htmlToText` gives it.
  *
  * The blocks sit flush: `</h1>` is one line break, which is a line's leading when the text is
  * drawn as one run, so nothing may be put between them.
  */
-export function htmlToBlocks(html: string): TextBlock[] {
+export function htmlToBlocks(html: string, headings = false): TextBlock[] {
+  if (!headings) {
+    const text = htmlToText(html);
+    return text ? [{ text, heading: false }] : [];
+  }
   const marked = html
     .replace(/<h([1-3])\b[^>]*>/gi, "\u0001")
     .replace(/<\/h[1-3]\s*>/gi, "\u0002");

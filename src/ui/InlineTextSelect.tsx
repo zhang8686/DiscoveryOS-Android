@@ -113,9 +113,12 @@ export function InlineTextSelect(props: {
   );
   props.onApi?.({ finish });
   const selectionEnded = createSelectionEnd(finish);
+  // A floor with nothing to select still gets one empty run, so the swap never leaves the list
+  // with a hole where the post was.
+  const blocks = props.blocks.length > 0 ? props.blocks : [{ text: "", heading: false }];
   return (
     <View testID="inline-select-block" style={{ alignSelf: "stretch" }}>
-      {props.blocks.map((block, index) => {
+      {blocks.map((block, index) => {
         const size = block.heading ? HEADING_SIZE : body;
         const weight = block.heading ? HEADING_WEIGHT : 400;
         return (
@@ -150,6 +153,9 @@ export function InlineTextSelect(props: {
                   bottom: 0,
                   fontSize: size,
                   fontWeight: weight,
+                  // The body's leading, handed to the field: the runtime lays it on the lines
+                  // (`setLineSpacing`), which a field cannot ask for in a style of its own.
+                  lineHeight,
                   color: palette().text,
                   backgroundColor: "transparent",
                   paddingHorizontal: 0,

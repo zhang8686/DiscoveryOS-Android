@@ -876,7 +876,7 @@ export function Thread(props: {
               // press anywhere else, puts the rich body back (see `onPress` above).
               inlineSelect() === item().seq ? (
                 <InlineTextSelect
-                  blocks={htmlToBlocks(bodyHtml(item()))}
+                  blocks={htmlToBlocks(bodyHtml(item()), item().seq === 1)}
                   onDone={() => inlineSelect.set(null)}
                   onApi={(api) => {
                     endInlineSelect = api.finish;

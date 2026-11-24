@@ -450,9 +450,17 @@ test("a floor without headings is one block, the text every reply has", () => {
   expect(htmlToBlocks(html)).toEqual([{ text: htmlToText(html), heading: false }]);
 });
 
+test("a reply keeps one block even when it carries a heading tag", () => {
+  // Only a first post's headings are set apart (`OP_TITLE_STYLES`); a reply draws its text the
+  // body's way throughout, so the selection screen must not split it and size a run differently.
+  expect(htmlToBlocks("<h1>引用的标题</h1><p>回复正文</p>")).toEqual([
+    { text: "引用的标题\n\n回复正文", heading: false },
+  ]);
+});
+
 test("a first post's heading keeps its own run, and the body follows as its own", () => {
   const html = "<h1>[Discovery] 昨天用了你们一直在安利的 workbuddy</h1><p>我一直想把我家的电信IPTV</p>";
-  expect(htmlToBlocks(html)).toEqual([
+  expect(htmlToBlocks(html, true)).toEqual([
     { text: "[Discovery] 昨天用了你们一直在安利的 workbuddy", heading: true },
     { text: "我一直想把我家的电信IPTV", heading: false },
   ]);
@@ -460,11 +468,11 @@ test("a first post's heading keeps its own run, and the body follows as its own"
 
 test("only the sizes the first post's style sets are runs of their own", () => {
   // `OP_TITLE_STYLES` gives h1–h3 a size and weight; h4 and down keep the body's.
-  expect(htmlToBlocks("<h3>三</h3>甲")).toEqual([
+  expect(htmlToBlocks("<h3>三</h3>甲", true)).toEqual([
     { text: "三", heading: true },
     { text: "甲", heading: false },
   ]);
-  expect(htmlToBlocks("<h4>四</h4>甲")).toEqual([{ text: "四\n甲", heading: false }]);
+  expect(htmlToBlocks("<h4>四</h4>甲", true)).toEqual([{ text: "四\n甲", heading: false }]);
 });
 
 test("notice.php's feed keeps every kind of notice and its floor, never the pm list", () => {
