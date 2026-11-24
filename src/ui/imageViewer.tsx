@@ -6,6 +6,7 @@ import { pixelSize } from "./pixelSize";
 import { notify } from "./toast";
 import { openLink } from "./links";
 import { imageDataUrl, scanPage } from "./qrScanner";
+import { warmImages } from "./imageWarm";
 
 export type Shown = {
   /** The original file, which Save writes and the viewer looks the picture up by. */
@@ -295,6 +296,16 @@ export function ImageViewer() {
       leavingX.set(0);
     }).catch(() => undefined);
   });
+  // The pictures on either side of the one shown are read while it is looked at, so a step draws
+  // from the cache instead of waiting on the network. Warming keeps no view: bytes go into the
+  // same cache the picture reads, with nothing to make, lay out or decode on the way — which is
+  // what the three hidden 1×1 images this used to mount cost.
+  effect(() => {
+    const g = viewerState();
+    if (!g || g.items.length < 2) return;
+    const near = [g.index - 1, g.index + 1, g.index + 2].filter((i) => i >= 0 && i < g.items.length);
+    warmImages(near.map((i) => g.items[i].display), 3);
+  });
   const gallery = () => viewerState();
   const current = () => gallery()?.items[gallery()!.index];
 
@@ -372,30 +383,36 @@ export function ImageViewer() {
             <Text style={{ fontSize: 12, color: "#aeb4bd" }}>{`${gallery()!.index + 1} / ${gallery()!.items.length}`}</Text>
           ) : null}
         </View>
-        {/* The picture is centred in a zoomable scroll: two fingers pinch it 1×–4×. */}
-        <Scroll
-          style={{ flex: 1 }}
-          minimumZoomScale={1}
-          maximumZoomScale={4}
-          zoomable={true}
-          centerContent={true}
-          contentStyle={{ alignItems: "center", justifyContent: "center" }}
+        {/* The drag surface sits AROUND the zoomable scroll, never inside it.
+            Inside, the scroll claimed the drag: its content was a little taller than its viewport
+            (`win.height - 8` in a column that also holds the name bar), so the platform's scroll
+            view took the touch over and cancelled the pan — a swipe or a downward pull reached
+            `onPanEnd` as `cancelled` and did nothing. Here the pan owns the drag, and the picture
+            is the scroll's only content: at 1× there is nothing to scroll, so the scroll never
+            claims a touch, while a pinch still zooms it 1×–4×. */}
+        <View
+          pan={{ y: dismissPan, x: stepPan }}
+          panActivation={{ activeOffsetX: 40, activeOffsetY: 40 }}
+          onPanEnd={(e: any) => {
+            const dx = e?.translation?.x ?? 0;
+            const vx = e?.velocity?.x ?? 0;
+            const dy = e?.translation?.y ?? 0;
+            if (Math.abs(dx) > Math.abs(dy) && !e?.cancelled && (dx < -50 || vx < -600)) stepImage(1);
+            else if (Math.abs(dx) > Math.abs(dy) && !e?.cancelled && (dx > 50 || vx > 600)) stepImage(-1);
+            else if (!e?.cancelled && dy > 90) viewerState.set(null);
+            dismissPan.set(0);
+            stepPan.set(0);
+          }}
+          style={{ flex: 1, alignItems: "stretch" }}
         >
-          <View
-            onPress={() => viewerState.set(null)}
-            pan={{ y: dismissPan, x: stepPan }}
-            panActivation={{ activeOffsetX: 40, activeOffsetY: 40 }}
-            onPanEnd={(e: any) => {
-              const dx = e?.translation?.x ?? 0;
-              const vx = e?.velocity?.x ?? 0;
-              const dy = e?.translation?.y ?? 0;
-              if (Math.abs(dx) > Math.abs(dy) && !e?.cancelled && (dx < -50 || vx < -600)) stepImage(1);
-              else if (Math.abs(dx) > Math.abs(dy) && !e?.cancelled && (dx > 50 || vx > 600)) stepImage(-1);
-              else if (!e?.cancelled && dy > 90) viewerState.set(null);
-              dismissPan.set(0);
-              stepPan.set(0);
-            }}
-            style={{ width: win.width, height: win.height - 8, alignItems: "center", justifyContent: "center" }}
+          {/* The picture is centred in a zoomable scroll: two fingers pinch it 1×–4×. */}
+          <Scroll
+            style={{ flex: 1 }}
+            minimumZoomScale={1}
+            maximumZoomScale={4}
+            zoomable={true}
+            centerContent={true}
+            contentStyle={{ alignItems: "center", justifyContent: "center" }}
           >
             <View
               onPress={() => undefined}
@@ -427,17 +444,10 @@ export function ImageViewer() {
                 />
               ) : null}
             </View>
-          </View>
-        </Scroll>
-        {/* The next and previous pictures are fetched while this one is read, so stepping through
-            them does not wait on the network each time. */}
-        {gallery()!.items.length > 1 ? (
-          <View style={{ width: 0, height: 0, opacity: 0 }}>
-            {[gallery()!.index - 1, gallery()!.index + 1, gallery()!.index + 2]
-              .filter((i) => i >= 0 && i < gallery()!.items.length)
-              .map((i) => <Image src={gallery()!.items[i].display} style={{ width: 1, height: 1 }} />)}
-          </View>
-        ) : null}
+          </Scroll>
+        </View>
+        {/* The next and previous pictures are read while this one is shown (the effect above),
+            so a step has the bytes already. */}
         {/* Previous, Close and next, within thumb reach, with the two steps reduced to arrows. */}
         <View style={{ position: "absolute", left: 0, right: 0, bottom: 26, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 18, zIndex: 20 }}>
           {gallery()!.items.length > 1 ? (
