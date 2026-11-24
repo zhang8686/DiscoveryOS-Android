@@ -199,28 +199,29 @@ export function BubbleIcon(props: { size: number }) {
   );
 }
 
-/** Two filled lower quotation marks, in the same muted colour and bounds as the reply bubble. */
+/** Two hollow lower quotation marks ("99" style), in the same muted colour and bounds as the reply bubble. */
 export function QuoteIcon(props: { size: number }) {
   return (
     <Canvas
       style={{ width: props.size, height: props.size }}
       draw={(cx, size) => {
         const s = size.width;
-        cx.fillStyle = palette().muted;
-        const mark = (x: number) => {
+        cx.strokeStyle = palette().muted;
+        cx.lineWidth = Math.max(1.1, s * 0.085);
+        cx.lineCap = "round";
+        cx.lineJoin = "round";
+        // Each mark is a rounded loop with a tail sweeping down to the left, like a "9".
+        const mark = (mx: number) => {
           cx.beginPath();
-          cx.moveTo(x, s * 0.26);
-          cx.lineTo(x + s * 0.32, s * 0.26);
-          cx.lineTo(x + s * 0.32, s * 0.6);
-          cx.quadraticCurveTo(x + s * 0.32, s * 0.74, x + s * 0.17, s * 0.74);
-          cx.lineTo(x + s * 0.08, s * 0.74);
-          cx.quadraticCurveTo(x + s * 0.22, s * 0.66, x + s * 0.19, s * 0.56);
-          cx.lineTo(x, s * 0.56);
-          cx.closePath();
-          cx.fill();
+          cx.arc(mx, s * 0.39, s * 0.145, 0, Math.PI * 2);
+          cx.stroke();
+          cx.beginPath();
+          cx.moveTo(mx + s * 0.1, s * 0.48);
+          cx.quadraticCurveTo(mx + s * 0.07, s * 0.72, mx - s * 0.13, s * 0.82);
+          cx.stroke();
         };
-        mark(s * 0.12);
-        mark(s * 0.56);
+        mark(s * 0.3);
+        mark(s * 0.7);
       }}
     />
   );

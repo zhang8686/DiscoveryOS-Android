@@ -91,8 +91,8 @@ const OP_TITLE_STYLES = {
 // A round, translucent action disc. The thread's own actions and the jump buttons share one look,
 // so the column's bottom right reads as one cluster.
 function ActionDisc(props: { label: string; onPress: () => void; active?: boolean; faint?: boolean; children: JSX.Element }) {
-  // `faint` is for the always-visible jump cluster: a lighter wash so it covers less of the
-  // post behind it. The folded actions keep the stronger wash. Active state stays opaque.
+  // `faint` is the lighter wash used across the whole action cluster — the always-visible discs,
+  // the folded menu too — so it covers less of the post behind it. Active state stays opaque.
   const wash = () => {
     if (props.active) return palette().selected;
     if (colorScheme() === "dark") return props.faint ? "rgba(22, 27, 34, 0.42)" : "rgba(22, 27, 34, 0.72)";
@@ -122,13 +122,13 @@ function ThreadActions(props: { saved: boolean; onFavorite: () => void; onBrowse
   return (
     <View style={entrance.style}>
       <View style={{ alignItems: "center", gap: 8 }}>
-        <ActionDisc label={props.saved ? "取消收藏" : "加入收藏"} onPress={props.onFavorite}>
+        <ActionDisc faint label={props.saved ? "取消收藏" : "加入收藏"} onPress={props.onFavorite}>
           <StarIcon size={17} filled={props.saved} />
         </ActionDisc>
-        <ActionDisc label="在浏览器中打开帖子" onPress={props.onBrowser}>
+        <ActionDisc faint label="在浏览器中打开帖子" onPress={props.onBrowser}>
           <BrowserIcon size={17} />
         </ActionDisc>
-        <ActionDisc label="复制帖子链接" onPress={props.onLink}>
+        <ActionDisc faint label="复制帖子链接" onPress={props.onLink}>
           <LinkIcon size={17} />
         </ActionDisc>
       </View>
