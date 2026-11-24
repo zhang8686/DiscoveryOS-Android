@@ -199,28 +199,28 @@ export function BubbleIcon(props: { size: number }) {
   );
 }
 
-/** Two filled lower quotation marks, the web forum's 引用 icon. */
+/** Two filled lower quotation marks, in the same muted colour and bounds as the reply bubble. */
 export function QuoteIcon(props: { size: number }) {
   return (
     <Canvas
       style={{ width: props.size, height: props.size }}
       draw={(cx, size) => {
         const s = size.width;
-        cx.fillStyle = palette().link;
+        cx.fillStyle = palette().muted;
         const mark = (x: number) => {
           cx.beginPath();
-          cx.moveTo(x, s * 0.18);
-          cx.lineTo(x + s * 0.32, s * 0.18);
-          cx.lineTo(x + s * 0.32, s * 0.52);
-          cx.quadraticCurveTo(x + s * 0.32, s * 0.66, x + s * 0.17, s * 0.66);
-          cx.lineTo(x + s * 0.08, s * 0.66);
-          cx.quadraticCurveTo(x + s * 0.22, s * 0.58, x + s * 0.19, s * 0.48);
-          cx.lineTo(x, s * 0.48);
+          cx.moveTo(x, s * 0.26);
+          cx.lineTo(x + s * 0.32, s * 0.26);
+          cx.lineTo(x + s * 0.32, s * 0.6);
+          cx.quadraticCurveTo(x + s * 0.32, s * 0.74, x + s * 0.17, s * 0.74);
+          cx.lineTo(x + s * 0.08, s * 0.74);
+          cx.quadraticCurveTo(x + s * 0.22, s * 0.66, x + s * 0.19, s * 0.56);
+          cx.lineTo(x, s * 0.56);
           cx.closePath();
           cx.fill();
         };
-        mark(s * 0.1);
-        mark(s * 0.55);
+        mark(s * 0.12);
+        mark(s * 0.56);
       }}
     />
   );
