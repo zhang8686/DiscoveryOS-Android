@@ -1,10 +1,9 @@
 import { Clipboard, cleanup, colorScheme, createAnimatedValue, createMotion, effect, keymap, List, pixelRatio, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef, type JSX } from "nsh";
 import { settleBack, settleExit, slideIn } from "./pageSlide";
 import { Dialog, TextView } from "nsh/base";
-import { BackHandler } from "nsh/mobile";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
-import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToBlocks, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
+import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
 import { attachmentIsPicture } from "../discuz/attachments";
 import { draftToPost, postToDraft, replyQuoteInDraft, splitDraftQuote } from "../discuz/quote";
 import { replyToChip, replyToHeader, replyToNotice, type ReplyTarget } from "../discuz/replyTo";
@@ -22,7 +21,6 @@ import { titleBarShown } from "./TitleBar";
 import { BrowserIcon, BubbleIcon, EnvelopeIcon, LinkIcon, PencilIcon, QuoteIcon, StarIcon, TrashIcon } from "./icons";
 import { ReplyCard } from "./ReplyCard";
 import { ReplyBox } from "./ReplyBox";
-import { InlineTextSelect } from "./InlineTextSelect";
 import { bodyPicturePx, clearWarmedImages, warmImages } from "./imageWarm";
 import { ThreadSkeleton } from "./Skeleton";
 import { attachmentTag, createAttachments } from "./attachments";
@@ -394,27 +392,6 @@ export function Thread(props: {
   // A press on a floor's avatar: first a "短信息" button, then the message sheet.
   const pmTarget = signal<{ id: string; name: string } | null>(null);
   const pmWriting = signal(false);
-  // The floor whose body is open for character-precise selection (`null`: none): a long press on a
-  // body puts the floor's plain text in its own place, read-only native fields whose selection the
-  // platform runs itself, so the handles move by character across every line and paragraph — the
-  // one thing nsh/base's text view does not offer on Android. The platform reports the selection
-  // emptying (a copy, a press elsewhere) and that puts the rich body back.
-  const inlineSelect = signal<number | null>(null);
-  // How the selection ends, from anywhere on the page: the platform's own Copy is the way it is
-  // meant to close, and a press outside the text, or Back, closes it too, through the same path
-  // (`createFinish` in InlineTextSelect.tsx says why the view goes a moment after the selection).
-  // Only a fallback until the screen has handed its own in.
-  let endInlineSelect = () => inlineSelect.set(null);
-  // Back closes the selection before it leaves the floor. An open platform selection carried off
-  // screen takes its toolbar with it: the toolbar is a window of its own, over everything, and
-  // every touch afterwards would land on it instead of the page.
-  try {
-    BackHandler.on("press", () => {
-      if (inlineSelect() === null) return false;
-      endInlineSelect();
-      return true;
-    });
-  } catch { /* the desktop preview has no back key */ }
 
   // A scroll pauses a video playing in the thread, so it never plays on off screen. Throttled:
   // the pause reaches the page at most a few times a second while the finger keeps moving.
@@ -841,7 +818,12 @@ export function Thread(props: {
       pan={props.onSwipeBack ? { x: backPan } : undefined}
       // `direction: "right"`: the pan activates on a rightward drag only — a leftward one fails it
       // in the native tracker, so the body neither follows a left swipe nor closes on one.
-      panActivation={props.onSwipeBack ? { activeOffsetX: 18, failOffsetY: 10, direction: "right" } : undefined}
+      // The thresholds are a pair of the same size (24): a long rightward drag on a wide tablet
+      // screen drifts vertically as it goes, and the old 10 pt vertical limit failed the gesture
+      // before the horizontal one could activate — the swipe then did nothing at all. With both at
+      // 24 the scroll still wins a vertical drag (it reaches 24 up or down before 24 sideways),
+      // and a deliberate rightward swipe wins its own way.
+      panActivation={props.onSwipeBack ? { activeOffsetX: 24, failOffsetY: 24, direction: "right" } : undefined}
       onPanEnd={props.onSwipeBack ? onSwipeEnd : undefined}
       style={{
         flex: 1, alignSelf: "stretch", overflow: "hidden",
@@ -856,7 +838,6 @@ export function Thread(props: {
           on the bar's 44pt; it drags the window where nothing presses. With no bar, it keeps the top inset. */}
       <View
         desktop={{ windowDrag: true }}
-        onPress={inlineSelect() !== null ? () => endInlineSelect() : undefined}
         style={{
           // The bar floats over the body in both orientations, so it can slide away on scroll and
           // let the text take its place.
@@ -927,9 +908,6 @@ export function Thread(props: {
               () => profileTarget.set({ uid: item().author.id, name: item().author.name, avatar: item().author.avatar })
             }
             meta={`#${item().seq} · ${timeAgo(item().at)}`}
-            // The meta row ends the selection; a press anywhere the field did not take is the way
-            // out when the button was missed, and puts the rich body back too.
-            onPress={inlineSelect() !== null ? () => endInlineSelect() : undefined}
             highlighted={() => hovered() === item().seq}
             onHoverIn={() => hovered.set(item().seq)}
             onHoverOut={() => {
@@ -966,29 +944,17 @@ export function Thread(props: {
               </View>
             }
             body={
-              // A long press on the body opens it for character-precise selection: the rich body
-              // (pictures and markup with it) gives way to plain read-only native fields in the very
-              // same place, where the platform's own handles move character by character across
-              // every line and paragraph. Copying, a press anywhere else, or Back puts the rich body
-              // back (see `onPress` above and `InlineTextSelect.tsx`). This is the one selection
-              // surface Android gives that is precise in the way a reader expects; the text view's
-              // own selection (nsh/base) collapses a drag onto whole lines on this platform.
-              inlineSelect() === item().seq ? (
-                <InlineTextSelect
-                  blocks={htmlToBlocks(bodyHtml(item()), item().seq === 1)}
-                  onDone={() => inlineSelect.set(null)}
-                  onApi={(api) => {
-                    endInlineSelect = api.finish;
-                  }}
-                />
-              ) : (
-              <View
-                onLongPress={() => inlineSelect.set(item().seq)}
-                style={{ gap: 12, alignSelf: "stretch" }}
-              >
+              // The body is the selection surface itself. A long press picks a word where the finger
+              // is, the platform's two handles then move the ends character by character across
+              // paragraphs, and the floating menu (Copy, Select all, Share) is Android's. Nothing of
+              // the page is swapped for a field, so the selection state draws with the very text the
+              // reader sees: the same type, leading, paragraph sums above blocks, margins, alignment
+              // and line breaks — no second renderer to keep in step, and no empty line where one
+              // would have parted the two.
+              <View style={{ gap: 12, alignSelf: "stretch" }}>
                 <TextView
                   html={drawnBody(item())}
-                  selectable={false}
+                  selectable={true}
                   styles={{
                     root: {
                       fontSize: displaySettings().body,
@@ -1041,7 +1007,6 @@ export function Thread(props: {
                     and opens it outside — the site's own app when one is registered for the
                     link, the browser otherwise, the system player for a video file. */}
               </View>
-              )
             }
           />
         )}

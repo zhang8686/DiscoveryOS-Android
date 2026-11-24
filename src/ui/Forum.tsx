@@ -893,7 +893,10 @@ export function Forum(props: {
   }
   /** Shows a pane over the body; only portrait has panes. */
   function showPane(pane: "list" | "boards") {
-    if (!panesNow) return;
+    // Read live rather than through the render-time `panesNow` snapshot: a swipe that arrives
+    // between a window change and its render would otherwise be dropped silently (a tablet
+    // turned to portrait, its body open, swiping back with nothing happening).
+    if (!wantsPanes()) return;
     paneOpenedAt = Date.now();
     portraitPane.set(pane);
     // Coming back to the board column refreshes its unread counts at once.
