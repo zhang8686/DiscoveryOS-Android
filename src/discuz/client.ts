@@ -3,6 +3,7 @@ import { absorbSetCookie, clearCookies, cookieHeader } from "./cookies";
 import { flushVault } from "./vault";
 import { htmlDecode, parseLoginQuestions } from "./parse";
 import { discuzPassword } from "./md5";
+import type { ReplyNotice } from "./replyTo";
 
 export const HOST = "https://www.4d4y.com/forum/";
 
@@ -461,14 +462,21 @@ export class ReplyRefused extends Error {}
 
 /** Posts a reply to a thread (`DiscuzAPI.postReply`). Resolves on success;
  * rejects with the page's own message when Discuz refuses it. The image
- * attachments the text inserts (`[attachimg]`) go with it. */
-export async function postReply(fid: string, tid: string, content: string): Promise<void> {
+ * attachments the text inserts (`[attachimg]`) go with it. `notice` is the web
+ * reply form's hidden fields for a targeted reply; without it the post goes
+ * out exactly as before. */
+export async function postReply(fid: string, tid: string, content: string, notice?: ReplyNotice): Promise<void> {
   if (!formHash) throw new Error("尚未登录");
   // The Swift app sends `\n` as CRLF and escapes characters outside the
   // CJK range as numeric references, then percent-encodes the GB18030 bytes.
   const message = htmlEntities(withSignature(content).replace(/\n/g, "\r\n"));
   const ids = attachedIds(content);
   const extra: [string, string][] = [];
+  if (notice) {
+    extra.push(["noticeauthor", notice.noticeauthor]);
+    extra.push(["noticetrimstr", notice.noticetrimstr]);
+    extra.push(["noticeauthormsg", notice.noticeauthormsg]);
+  }
   if (ids.length > 0) {
     const posttime = postTimes.get(tid) ?? (await replyBox(fid, tid)).posttime;
     extra.push(["posttime", posttime]);

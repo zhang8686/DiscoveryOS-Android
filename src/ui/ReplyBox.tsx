@@ -53,6 +53,10 @@ export function ReplyBox(props: {
   quote?: () => string;
   /** Drops the quote, keeping the reader's own words and attachments. */
   onClearQuote?: () => void;
+  /** The floor being replied to, shown above the field as one removable chip. */
+  replyTo?: () => string;
+  /** Drops the reply target, keeping the reader's own words and attachments. */
+  onClearReplyTo?: () => void;
   onSend: () => void;
   onPaste?: (e: PasteEvent) => void;
   /** Local files dropped on the box, as `file:` URLs. */
@@ -105,10 +109,11 @@ export function ReplyBox(props: {
   const fieldCeiling = () => imeOpen() ? Math.min(ceiling, Math.max(IME_FIELD_MAX, floor)) : ceiling;
   const attachCeiling = () => imeOpen() ? IME_ATTACH_MAX : MAX_HEIGHT;
   const quoteText = () => props.quote?.() ? quoteAttribution(props.quote!()) : "";
+  const replyToText = () => props.replyTo?.() ?? "";
   const fieldHeight = signal(floor);
   const focused = signal(false);
   const collapsed = () =>
-    props.collapsible !== false && !focused() && !props.quote?.() && props.draft().length === 0 && pictures().length === 0 && !props.uploading?.();
+    props.collapsible !== false && !focused() && !props.quote?.() && !props.replyTo?.() && props.draft().length === 0 && pictures().length === 0 && !props.uploading?.();
   let field: { focus(): void; blur(): void } | undefined;
   let wasSending = false;
   effect(() => {
@@ -197,6 +202,32 @@ export function ReplyBox(props: {
               onPress={props.onClearQuote}
               accessibilityLabel="取消引用"
               tooltip={hint("取消引用")}
+              style={{ width: 24, height: 24, flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 6 }}
+            >
+              <Text style={{ fontSize: 17, lineHeight: 20, color: palette().muted }}>×</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+      {replyToText() ? (
+        <View
+          accessibilityLabel="回复的楼层与作者，只读"
+          style={{
+            flexDirection: "row", gap: 8, marginHorizontal: 4, paddingVertical: 6, paddingHorizontal: 10,
+            borderRadius: 6, backgroundColor: palette().bg,
+            borderLeftWidth: 3, borderLeftColor: palette().link,
+          }}
+        >
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ fontSize: 12, lineHeight: 17, color: palette().link, numberOfLines: 1 }}>
+              {replyToText()}
+            </Text>
+          </View>
+          {props.onClearReplyTo ? (
+            <View
+              onPress={props.onClearReplyTo}
+              accessibilityLabel="取消回复目标"
+              tooltip={hint("取消回复目标")}
               style={{ width: 24, height: 24, flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 6 }}
             >
               <Text style={{ fontSize: 17, lineHeight: 20, color: palette().muted }}>×</Text>

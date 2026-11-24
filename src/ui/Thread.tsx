@@ -6,6 +6,7 @@ import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, remo
 import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
 import { attachmentIsPicture } from "../discuz/attachments";
 import { draftToPost, postToDraft, replyQuoteInDraft, splitDraftQuote } from "../discuz/quote";
+import { replyToChip, replyToHeader, replyToNotice, type ReplyTarget } from "../discuz/replyTo";
 import { downloadAttachment } from "./downloads";
 import { DISCUZ_EXTENSIONS, renderDiscuzNode } from "./discuzMarkup";
 import { useCommand } from "./commands";
@@ -17,7 +18,7 @@ import { palette } from "./appearance";
 import { LineIcon } from "./lineIcons";
 import { openGallery, openImageViewer, postImages } from "./imageViewer";
 import { titleBarShown } from "./TitleBar";
-import { BrowserIcon, BubbleIcon, EnvelopeIcon, LinkIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
+import { BrowserIcon, BubbleIcon, EnvelopeIcon, LinkIcon, PencilIcon, QuoteIcon, StarIcon, TrashIcon } from "./icons";
 import { ReplyCard } from "./ReplyCard";
 import { ReplyBox } from "./ReplyBox";
 import { bodyPicturePx, clearWarmedImages, warmImages } from "./imageWarm";
@@ -34,6 +35,9 @@ import { canSendReply } from "./replyGate";
 import { isFavorite, markFavorite } from "./favorites";
 
 const draftKey = (tid: string) => `draft:${tid}`;
+// The floor a reply is aimed at is kept apart from the draft: the draft stays just the reader's
+// words, while the target survives a restart as a small chip above the field.
+const replyTargetKey = (tid: string) => `reply-to:${tid}`;
 
 // How long a `g` waits for the second `g` of `gg`.
 const G_WAIT_MS = 1000;
@@ -160,6 +164,9 @@ export function Thread(props: {
   // its own, and is put back in front of the words when the reply is sent or the draft is saved
   // (so a saved draft keeps the `>`-line form older builds wrote).
   const quoted = signal("");
+  // A targeted reply (`reppost`) is mutually exclusive with a quote: one header at the top of a
+  // post, never both. Its chip shows `回复 22# mrky`, and it is stored on its own key.
+  const replyTarget = signal<ReplyTarget | null>(null);
   const sending = signal(false);
   // Whether the thread is in the favorites: the shared list, which the thread lists star from.
   const saved = () => isFavorite(props.post.id);
@@ -480,14 +487,20 @@ export function Thread(props: {
 
   async function send() {
     if (!canSendReply(replyText()) || sending() || uploading()) return;
-    // The reply's text, then the pictures as their tags.
-    const body = [draftToPost(replyText(), HOST), ...attachments().map(attachmentTag)].join("\n");
+    // A targeted reply starts with the forum's own `回复 22# mrky` line, then the reader's words.
+    // The header is added after `draftToPost` so its BBCode is never read as a `>`-line; the hidden
+    // notice fields go with it, as on the web's reply form. No target: the body is as before.
+    const target = replyTarget();
+    const text = draftToPost(replyText(), HOST);
+    const body = [target ? replyToHeader(target, HOST) + text : text, ...attachments().map(attachmentTag)].join("\n");
     sending.set(true);
     try {
-      await postReply(fid(), props.post.id, body);
+      await postReply(fid(), props.post.id, body, target ? replyToNotice(target, HOST) : undefined);
       notify("reply", "回复已发布。");
       attachments.set([]);
       quoted.set("");
+      replyTarget.set(null);
+      void Storage.removeItem(replyTargetKey(props.post.id)).catch(() => undefined);
       await setDraft("");
     } catch (e) {
       // The forum's own refusal (e.g. the 30-second limit) is shown as it words it.
@@ -523,7 +536,30 @@ export function Thread(props: {
     void setDraft(draft());
   }
 
+  // A reply to a floor is the other header the forum writes: one header per reply, so taking it
+  // clears a pending quote (and vice versa). Its chip holds only the floor and author.
+  function dropReplyTarget() {
+    replyTarget.set(null);
+    void Storage.removeItem(replyTargetKey(props.post.id)).catch(() => undefined);
+  }
+
+  function replyToFloor(r: Reply) {
+    quoted.set("");
+    void setDraft(draft());
+    const target: ReplyTarget = {
+      pid: r.id,
+      ptid: props.post.id,
+      seq: r.seq,
+      uid: r.author.id,
+      name: r.author.name,
+      message: htmlToText(r.body),
+    };
+    replyTarget.set(target);
+    void Storage.setItem(replyTargetKey(props.post.id), JSON.stringify(target)).catch(() => undefined);
+  }
+
   function quote(r: Reply) {
+    if (replyTarget()) dropReplyTarget();
     // The floor's own text goes with the attribution, as the web forum's 引用 does: a quote the
     // forum is left to draw with only an author and a time reads as an empty quote there (the
     // body is what the `[quote]` carries, not something the attribution implies). Plain text, so
@@ -740,11 +776,21 @@ export function Thread(props: {
   // Load the first page and the saved draft once.
   if (props.focusPid) void showFloor(props.focusPid);
   else fetchPage(1);
+  Storage.getItem(replyTargetKey(props.post.id))
+    .then((text) => {
+      if (!text) return;
+      const t = JSON.parse(text) as ReplyTarget;
+      if (!t || !t.pid || !t.name || typeof t.seq !== "number") return;
+      replyTarget.set(t);
+      // One header per reply: an older draft may still have `>`-lines, but the target wins.
+      quoted.set("");
+    })
+    .catch(() => undefined);
   Storage.getItem(draftKey(props.post.id))
     .then((text) => {
       // A draft saved with a quote in front of it reads back as a quote bar plus the words.
       const parts = splitDraftQuote(postToDraft(text ?? ""));
-      if (parts.quoted) quoted.set(parts.quoted);
+      if (parts.quoted && !replyTarget()) quoted.set(parts.quoted);
       draft.set(parts.own);
     })
     .catch(() => undefined);
@@ -858,10 +904,17 @@ export function Thread(props: {
                     <TrashIcon size={16} />
                   </View>
                 ) : null}
-                <View onPress={() => props.signedIn ? quote(item()) : props.onSignInNeeded?.()}
-                  accessibilityLabel="引用"
+                <View onPress={() => props.signedIn ? replyToFloor(item()) : props.onSignInNeeded?.()}
+                  accessibilityLabel="回复"
+                  tooltip={hint("回复这一楼")}
                   style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
                   <BubbleIcon size={16} />
+                </View>
+                <View onPress={() => props.signedIn ? quote(item()) : props.onSignInNeeded?.()}
+                  accessibilityLabel="引用"
+                  tooltip={hint("引用这一楼")}
+                  style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
+                  <QuoteIcon size={16} />
                 </View>
               </View>
             }
@@ -1068,6 +1121,8 @@ export function Thread(props: {
             onAttach={addFiles}
             quote={() => (editing() ? "" : quotePart())}
             onClearQuote={dropQuote}
+            replyTo={() => (editing() || !replyTarget() ? "" : replyToChip(replyTarget()!))}
+            onClearReplyTo={dropReplyTarget}
             draft={() => editing()?.text ?? draft()}
             onDraft={(text) => {
               const current = editing();

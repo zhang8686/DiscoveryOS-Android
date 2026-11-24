@@ -199,6 +199,33 @@ export function BubbleIcon(props: { size: number }) {
   );
 }
 
+/** Two filled lower quotation marks, the web forum's 引用 icon. */
+export function QuoteIcon(props: { size: number }) {
+  return (
+    <Canvas
+      style={{ width: props.size, height: props.size }}
+      draw={(cx, size) => {
+        const s = size.width;
+        cx.fillStyle = palette().link;
+        const mark = (x: number) => {
+          cx.beginPath();
+          cx.moveTo(x, s * 0.18);
+          cx.lineTo(x + s * 0.32, s * 0.18);
+          cx.lineTo(x + s * 0.32, s * 0.52);
+          cx.quadraticCurveTo(x + s * 0.32, s * 0.66, x + s * 0.17, s * 0.66);
+          cx.lineTo(x + s * 0.08, s * 0.66);
+          cx.quadraticCurveTo(x + s * 0.22, s * 0.58, x + s * 0.19, s * 0.48);
+          cx.lineTo(x, s * 0.48);
+          cx.closePath();
+          cx.fill();
+        };
+        mark(s * 0.1);
+        mark(s * 0.55);
+      }}
+    />
+  );
+}
+
 /** A paper plane as a thin outline; `enabled` reads true for the link blue, false for the muted one. */
 export function PlaneIcon(props: { size: number; enabled: () => boolean }) {
   return (
