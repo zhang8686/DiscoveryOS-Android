@@ -1,6 +1,7 @@
 import { Clipboard, cleanup, colorScheme, createAnimatedValue, createMotion, effect, keymap, List, pixelRatio, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef, type JSX } from "nsh";
 import { settleBack, settleExit, slideIn } from "./pageSlide";
-import { Dialog, TextView } from "nsh/base";
+import { Dialog, TextView, type TextViewDocument } from "nsh/base";
+import { smoothDocumentBreaks } from "../discuz/smoothBreaks";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
 import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
@@ -75,6 +76,34 @@ function cachedBodyHtml(id: string, parse: () => string): string {
     }
   }
   return html;
+}
+
+// Experiment (v1.2.2-2): the body is fed to TextView as a document whose line
+// breaks have been folded into text nodes, so the selection sees ONE text per
+// visual paragraph instead of one per `<br>`. Parsing the same HTML twice per
+// render is wasteful: keep the smoothed document beside the HTML cache, keyed
+// the same way (reply id + pixel width), with the same bounded recency policy.
+const docCache = new Map<string, TextViewDocument>();
+const DOC_CACHE_LIMIT = 120;
+
+function bodyDocument(id: string, html: string): TextViewDocument {
+  const hit = docCache.get(id);
+  if (hit !== undefined) {
+    docCache.delete(id);
+    docCache.set(id, hit);
+    return hit;
+  }
+  const doc = smoothDocumentBreaks(TextView.parseHtml(html, DISCUZ_EXTENSIONS));
+  docCache.set(id, doc);
+  if (docCache.size > DOC_CACHE_LIMIT) {
+    const drop = Math.floor(DOC_CACHE_LIMIT / 4);
+    let n = 0;
+    for (const key of docCache.keys()) {
+      if (n++ >= drop) break;
+      docCache.delete(key);
+    }
+  }
+  return doc;
 }
 
 // The thread's title shows in the header at the large size; the first post's
@@ -297,6 +326,14 @@ export function Thread(props: {
   function drawnBody(r: Reply): string {
     attachedPictureRevision();
     return showAttachedPictures(bodyHtml(r), attachedPicture);
+  }
+
+  /** The experiment's document: the drawn body read into a TextView document with every `<br>`
+   *  folded into a text node's "\n". The attachment revision is part of the key so a picture
+   *  that arrives after the floor first draws still shows up in the document. */
+  function drawnDocument(r: Reply): TextViewDocument {
+    const revision = attachedPictureRevision();
+    return bodyDocument(`${r.id}@${bodyImagePx()}@${revision}`, drawnBody(r));
   }
 
   /** Opens the viewer at one of a post's pictures: the one tapped when its HTML names it, and on
@@ -946,9 +983,16 @@ export function Thread(props: {
               // reader sees: the same type, leading, paragraph sums above blocks, margins, alignment
               // and line breaks — no second renderer to keep in step, and no empty line where one
               // would have parted the two.
+              //
+              // v1.2.2-2 experiment: the body is passed as a `document` whose `<br>` breaks have been
+              // folded into their text nodes' "\n". nsh 589a60f otherwise mounts each `<br>` as its
+              // own text view; with `continues_text` false on body texts, the two handles cannot
+              // cross it and a floor selects whole lines. A "\n" inside one text node wraps into
+              // several visual lines of that SAME text view, which the handles cross per character
+              // (exactly how a floor with no `<br>` already behaves). See smoothBreaks.ts.
               <View style={{ gap: 12, alignSelf: "stretch" }}>
                 <TextView
-                  html={drawnBody(item())}
+                  document={drawnDocument(item())}
                   selectable={true}
                   styles={{
                     root: {
