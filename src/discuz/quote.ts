@@ -22,9 +22,14 @@ export function quoteInDraft(source: QuoteSource, body: string): string {
   return [attribution, ...lines].join("\n");
 }
 
-/** A reply quoted into the box: only its author and time, as a web forum's brief quote. */
-export function replyQuoteInDraft(reply: Reply, ptid: string): string {
-  return quoteInDraft({ author: reply.author.name, at: reply.at, pid: reply.id, ptid }, "");
+/**
+ * A reply quoted into the box: its author and time, then its text (plain text, one line each), as
+ * the web forum's own 引用 writes it. The body is optional because a floor with nothing to read —
+ * a picture on its own, an attachment the app did not fetch — still has a floor to point at: the
+ * attribution alone, which the forum draws as a one-line quote.
+ */
+export function replyQuoteInDraft(reply: Reply, ptid: string, body = ""): string {
+  return quoteInDraft({ author: reply.author.name, at: reply.at, pid: reply.id, ptid }, body);
 }
 
 /** The leading `>` run of a draft, split from what the reader wrote after it. */

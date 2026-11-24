@@ -3,17 +3,33 @@ import { draftToPost, postToDraft, quoteAttribution, quoteInDraft, replyQuoteInD
 
 const HOST = "https://www.4d4y.com/forum/";
 
-test("a reply quoted into the box is a brief attribution only, as the phone app writes it", () => {
-  const reply = {
-    id: "555",
-    author: { id: "7", name: "Alice", avatar: "" },
-    at: "2026-11-02 10:00",
-    seq: 3,
-    body: '<div class="postmessage">hi<br>there <b>you</b></div>',
-  };
-  const draft = replyQuoteInDraft(reply, "9");
-  expect(draft).toBe("> Alice 发表于 2026-11-02 10:00 [pid:555 ptid:9]");
+const QUOTED_REPLY = {
+  id: "555",
+  author: { id: "7", name: "Alice", avatar: "" },
+  at: "2026-11-02 10:00",
+  seq: 3,
+  body: '<div class="postmessage">hi<br>there <b>you</b></div>',
+};
+
+const ATTRIBUTION = "Alice 发表于 2026-11-02 10:00 [pid:555 ptid:9]";
+
+test("a reply quoted into the box carries the floor's text under its attribution", () => {
+  const draft = replyQuoteInDraft(QUOTED_REPLY, "9", "hi\nthere you");
+  expect(draft).toBe(`> ${ATTRIBUTION}\n> hi\n> there you`);
+  // The box shows the attribution alone above the field.
   expect(quoteAttribution(draft)).toBe("Alice 发表于 2026-11-02 10:00");
+  // Sent, it is a quote with the text in it — what the forum draws in full, not a bare attribution.
+  expect(draftToPost(`${draft}\n\nok`, HOST)).toBe(
+    "[quote] hi\nthere you\n" +
+      "[size=2][color=#999999]Alice 发表于 2026-11-02 10:00[/color] " +
+      "[url=https://www.4d4y.com/forum/redirect.php?goto=findpost&pid=555&ptid=9][img]https://www.4d4y.com/forum/images/common/back.gif[/img][/url][/size][/quote]\n\n" +
+      "ok",
+  );
+});
+
+test("a floor with no text to quote keeps the one-line quote", () => {
+  const draft = replyQuoteInDraft(QUOTED_REPLY, "9");
+  expect(draft).toBe(`> ${ATTRIBUTION}`);
 });
 
 test("a brief quote is sent as a one-line forum quote", () => {

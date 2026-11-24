@@ -3,7 +3,7 @@ import { settleBack, settleExit, slideIn } from "./pageSlide";
 import { Dialog, TextView } from "nsh/base";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
-import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
+import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
 import { attachmentIsPicture } from "../discuz/attachments";
 import { draftToPost, postToDraft, replyQuoteInDraft, splitDraftQuote } from "../discuz/quote";
 import { downloadAttachment } from "./downloads";
@@ -524,7 +524,12 @@ export function Thread(props: {
   }
 
   function quote(r: Reply) {
-    quoted.set(replyQuoteInDraft(r, props.post.id));
+    // The floor's own text goes with the attribution, as the web forum's 引用 does: a quote the
+    // forum is left to draw with only an author and a time reads as an empty quote there (the
+    // body is what the `[quote]` carries, not something the attribution implies). Plain text, so
+    // the floor's markup is not posted back as HTML; a picture-only floor has none to quote and
+    // keeps the one-line quote it always had.
+    quoted.set(replyQuoteInDraft(r, props.post.id, htmlToText(r.body)));
     void setDraft(draft());
   }
 
