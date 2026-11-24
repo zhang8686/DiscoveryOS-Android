@@ -21,7 +21,7 @@ import { titleBarShown } from "./TitleBar";
 import { BrowserIcon, BubbleIcon, EnvelopeIcon, LinkIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
 import { ReplyCard } from "./ReplyCard";
 import { ReplyBox } from "./ReplyBox";
-import { bodyPicturePx, warmImages } from "./imageWarm";
+import { bodyPicturePx, clearWarmedImages, warmImages } from "./imageWarm";
 import { ThreadSkeleton } from "./Skeleton";
 import { attachmentTag, createAttachments } from "./attachments";
 import type { Attached } from "./ReplyBox";
@@ -309,17 +309,22 @@ export function Thread(props: {
   /** Loads the first pictures a page's floors will draw, in reading order, so their bytes are in
    *  memory while the text lays itself out instead of one round trip after the words appear. The
    *  faces of the floors are left to their own `Avatar`s (small, and drawn at once), and the rest
-   *  of a page's pictures ask for themselves as the view reaches them. */
+   *  of a page's pictures ask for themselves as the view reaches them.
+   *
+   *  A thread's own pictures come before whatever the list left queued: the queue is cleared as the
+   *  page arrives, so a picture the reader is now looking at is never behind one they scrolled
+   *  past. Downloading is not interrupted (the runtime's pool finishes those), only the waiting. */
   function warmPageImages(list: Reply[]): void {
     const urls: string[] = [];
     for (const r of list) {
       for (const m of bodyHtml(r).matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
         if (m[1]) urls.push(m[1]);
-        if (urls.length >= 10) break;
+        if (urls.length >= 12) break;
       }
-      if (urls.length >= 10) break;
+      if (urls.length >= 12) break;
     }
-    warmImages(urls, 10);
+    clearWarmedImages();
+    warmImages(urls, 12);
   }
 
   // The pictures a reply shows (block images carry the original in `title`), so a

@@ -173,11 +173,11 @@ function warmPagePictures(replies: Reply[]): void {
   for (const r of replies) {
     for (const m of absolutize(fixDiscuzMarkup(fixImages(r.body, px)), HOST_BASE).matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
       if (m[1]) urls.push(m[1]);
-      if (urls.length >= 4) break;
+      if (urls.length >= 8) break;
     }
-    if (urls.length >= 4) break;
+    if (urls.length >= 8) break;
   }
-  warmImages(urls, 4);
+  warmImages(urls, 8);
 }
 
 /** The thread a row shows. A title row has none: it is never drawn as a thread, so the empty

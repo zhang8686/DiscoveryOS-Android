@@ -30,8 +30,9 @@ let loader: Loader = defaultLoader;
 const asked = new Set<string>();
 const queue: string[] = [];
 /** How many warm-ups run at once: enough that a page of pictures arrives together, few enough
- *  that the pictures already on screen are not starved of the connection. */
-const CONCURRENCY = 3;
+ *  that the pictures already on screen are not starved of the connection. The runtime's own
+ *  download pool is the ceiling (`Images.POOL`), so this never asks for more than it can run. */
+const CONCURRENCY = 6;
 let active = 0;
 
 function pump(): void {
