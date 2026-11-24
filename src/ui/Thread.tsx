@@ -90,7 +90,14 @@ const OP_TITLE_STYLES = {
 // (a thread opened from a link, whose title and forum come from its first page).
 // A round, translucent action disc. The thread's own actions and the jump buttons share one look,
 // so the column's bottom right reads as one cluster.
-function ActionDisc(props: { label: string; onPress: () => void; active?: boolean; children: JSX.Element }) {
+function ActionDisc(props: { label: string; onPress: () => void; active?: boolean; faint?: boolean; children: JSX.Element }) {
+  // `faint` is for the always-visible jump cluster: a lighter wash so it covers less of the
+  // post behind it. The folded actions keep the stronger wash. Active state stays opaque.
+  const wash = () => {
+    if (props.active) return palette().selected;
+    if (colorScheme() === "dark") return props.faint ? "rgba(22, 27, 34, 0.42)" : "rgba(22, 27, 34, 0.72)";
+    return props.faint ? "rgba(255, 255, 255, 0.5)" : "rgba(255, 255, 255, 0.82)";
+  };
   return (
     <View
       onPress={props.onPress}
@@ -98,9 +105,7 @@ function ActionDisc(props: { label: string; onPress: () => void; active?: boolea
       tooltip={hint(props.label)}
       style={{
         width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center",
-        backgroundColor: props.active
-          ? palette().selected
-          : colorScheme() === "dark" ? "rgba(22, 27, 34, 0.72)" : "rgba(255, 255, 255, 0.82)",
+        backgroundColor: wash(),
         borderWidth: 1, borderColor: palette().border,
       }}
     >
@@ -371,6 +376,11 @@ export function Thread(props: {
   const jumping = signal(false);
   // The thread's actions (favorite, browser, link) folded under the round control at the bottom right.
   const toolboxOpen = signal(false);
+  // The bottom-right cluster can be dragged up or down the right edge. `dockY` is where it rests
+  // (pixels lifted from its default bottom); `dockPan` follows the finger during a drag. The
+  // live translate and the resting bottom add up, so the discs stay under the finger throughout.
+  const dockY = signal(0);
+  const dockPan = createAnimatedValue(0);
   // A press on a floor's avatar: first a "短信息" button, then the message sheet.
   const pmTarget = signal<{ id: string; name: string } | null>(null);
   const pmWriting = signal(false);
@@ -891,30 +901,32 @@ export function Thread(props: {
               if (hovered() === item().seq) hovered.set(null);
             }}
             trailing={
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              // Quote sits before Reply so the quote glyph is never the last item pushed past the
+              // card edge on a narrow screen; tighter discs and gap give the four-icon row room.
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 0 }}>
                 {props.signedIn && isOwn(item()) ? (
                   <View onPress={() => void startEdit(item())} accessibilityLabel="编辑"
-                    style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
-                    <PencilIcon size={16} />
+                    style={{ width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
+                    <PencilIcon size={15} />
                   </View>
                 ) : null}
                 {props.signedIn && isOwn(item()) && item().seq !== 1 ? (
                   <View onPress={() => pendingDelete.set({ pid: item().id, seq: item().seq })} accessibilityLabel="删除"
-                    style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
-                    <TrashIcon size={16} />
+                    style={{ width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
+                    <TrashIcon size={15} />
                   </View>
                 ) : null}
-                <View onPress={() => props.signedIn ? replyToFloor(item()) : props.onSignInNeeded?.()}
-                  accessibilityLabel="回复"
-                  tooltip={hint("回复这一楼")}
-                  style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
-                  <BubbleIcon size={16} />
-                </View>
                 <View onPress={() => props.signedIn ? quote(item()) : props.onSignInNeeded?.()}
                   accessibilityLabel="引用"
                   tooltip={hint("引用这一楼")}
-                  style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
-                  <QuoteIcon size={16} />
+                  style={{ width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
+                  <QuoteIcon size={15} />
+                </View>
+                <View onPress={() => props.signedIn ? replyToFloor(item()) : props.onSignInNeeded?.()}
+                  accessibilityLabel="回复"
+                  tooltip={hint("回复这一楼")}
+                  style={{ width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
+                  <BubbleIcon size={15} />
                 </View>
               </View>
             }
@@ -1063,7 +1075,27 @@ export function Thread(props: {
           style={{ position: "absolute", left: 0, top: 0, right: 0, bottom: 0, zIndex: 19 }}
         />
       ) : null}
-      <View style={{ position: "absolute", right: 14, bottom: 104, alignItems: "center", gap: 8, zIndex: 20 }}>
+      {/* The cluster is dragged by any of its discs. Only a clearly vertical drag activates the
+          pan, so a tap still reaches the disc underneath (the 8pt threshold is below a tap's
+          slop). The panel of actions, when open, is part of this group and moves with it. */}
+      <View
+        pan={{ y: dockPan }}
+        panActivation={{ activeOffsetY: 8, failOffsetX: 12 }}
+        onPanEnd={(e: any) => {
+          const dy = e?.translation?.y ?? 0;
+          if (!e?.cancelled) {
+            // Up is positive: dragging up lifts the group (a larger resting bottom). Clamp so it
+            // stays between the title bar and the reply box, whatever the window height.
+            const top = Math.max(0, windowSize().height - 104 - 160 - 56);
+            dockY.set(Math.min(top, Math.max(-32, dockY() - dy)));
+          }
+          dockPan.set(0);
+        }}
+        style={{
+          position: "absolute", right: 14, bottom: 104 + dockY(), alignItems: "center", gap: 8, zIndex: 20,
+          transform: [{ translateY: dockPan }],
+        }}
+      >
           {toolboxOpen() ? (
             <View style={{ position: "absolute", right: 0, bottom: replies().length > 0 ? 136 : 48, alignItems: "center" }}>
               <ThreadActions
@@ -1085,7 +1117,7 @@ export function Thread(props: {
               />
             </View>
           ) : null}
-          <ActionDisc
+          <ActionDisc faint
             label={toolboxOpen() ? "收起帖子操作" : "帖子操作"}
             active={toolboxOpen()}
             onPress={() => toolboxOpen.set(!toolboxOpen())}
@@ -1095,11 +1127,11 @@ export function Thread(props: {
           {/* Jump buttons only once there are floors to jump between. */}
           {replies().length > 0 ? (
             <>
-              <ActionDisc label="回到第一楼" onPress={toFirstFloor}>
+              <ActionDisc faint label="回到第一楼" onPress={toFirstFloor}>
                 <LineIcon name="chevronUp" size={18} />
               </ActionDisc>
               <View style={{ opacity: jumping() ? 0.5 : 1 }}>
-                <ActionDisc label="跳到最后一楼" onPress={jumping() ? () => undefined : () => void toLastFloor()}>
+                <ActionDisc faint label="跳到最后一楼" onPress={jumping() ? () => undefined : () => void toLastFloor()}>
                   <LineIcon name="chevronDown" size={18} />
                 </ActionDisc>
               </View>
