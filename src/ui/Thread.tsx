@@ -31,6 +31,7 @@ import { PmComposer } from "./PmComposer";
 import { ProfileSheet } from "./ProfileSheet";
 import { attachedPicture, attachedPictureKnown, attachedPictureRevision } from "./attachPictures";
 import { canSendReply } from "./replyGate";
+import { clampDockY, loadDockY, saveDockY } from "./threadDock";
 
 import { isFavorite, markFavorite } from "./favorites";
 
@@ -381,6 +382,13 @@ export function Thread(props: {
   // live translate and the resting bottom add up, so the discs stay under the finger throughout.
   const dockY = signal(0);
   const dockPan = createAnimatedValue(0);
+  // The resting spot is remembered across threads and restarts. Read it on entry, clamped to
+  // this window; a drag that starts before the read finishes wins, so the old value cannot land
+  // on top of where the reader just put the group.
+  let dockTouched = false;
+  loadDockY().then((saved) => {
+    if (saved !== null && !dockTouched) dockY.set(clampDockY(saved, windowSize().height));
+  });
   // A press on a floor's avatar: first a "短信息" button, then the message sheet.
   const pmTarget = signal<{ id: string; name: string } | null>(null);
   const pmWriting = signal(false);
@@ -1086,8 +1094,12 @@ export function Thread(props: {
           if (!e?.cancelled) {
             // Up is positive: dragging up lifts the group (a larger resting bottom). Clamp so it
             // stays between the title bar and the reply box, whatever the window height.
-            const top = Math.max(0, windowSize().height - 104 - 160 - 56);
-            dockY.set(Math.min(top, Math.max(-32, dockY() - dy)));
+            const next = clampDockY(dockY() - dy, windowSize().height);
+            if (next !== dockY()) {
+              dockTouched = true;
+              dockY.set(next);
+              saveDockY(next);
+            }
           }
           dockPan.set(0);
         }}
