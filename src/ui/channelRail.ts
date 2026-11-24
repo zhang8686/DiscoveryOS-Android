@@ -39,12 +39,11 @@ const SWIPE_VELOCITY = 700;
  * the folded column and a left one folds it again, the two being the mirror of
  * each other.
  *
- * A window narrower than {@link RAIL_BELOW} has one state only (the rail, folded
- * or not), so a swipe there asks for nothing: it must not leave a fold saved
- * that nothing on screen shows.
+ * The width is the caller's business: the side-by-side home only shows the fold
+ * when the window is wide enough for the full column, while portrait's boards
+ * pane lays the column out either way and folds there too.
  */
-export function foldSwipeIntent(dx: number, vx: number, windowWidth: number): "open" | "fold" | null {
-  if (windowWidth < RAIL_BELOW) return null;
+export function foldSwipeIntent(dx: number, vx: number): "open" | "fold" | null {
   if (dx > SWIPE_DISTANCE || vx > SWIPE_VELOCITY) return "open";
   if (dx < -SWIPE_DISTANCE || vx < -SWIPE_VELOCITY) return "fold";
   return null;

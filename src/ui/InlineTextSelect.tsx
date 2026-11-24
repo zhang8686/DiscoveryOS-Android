@@ -1,10 +1,15 @@
 import { Text, View, type InputRef } from "nsh";
 import { Input } from "nsh/base";
+import type { TextBlock } from "../discuz/parse";
 import { palette } from "./appearance";
 import { displaySettings } from "./settings";
 
 /** The blue Android draws its own text selection in (Pixel's accent, `#4285F4`). */
 const SELECTION_BLUE = "#4285F4";
+
+/** A first post's headings, as the rich body draws them (`OP_TITLE_STYLES` in Thread.tsx). */
+export const HEADING_SIZE = 16;
+export const HEADING_WEIGHT = 500;
 
 /**
  * How a selection screen closes: `clear` drops the platform's selection and gives the field's
@@ -65,8 +70,8 @@ export function createSelectionEnd(onEnd: () => void) {
 export type InlineTextSelectApi = { finish: () => void };
 
 /**
- * A floor's text as a read-only native input, in the floor's own place: a long press on a post
- * swaps its rich body for this, so the platform's own selection is the one at work — a long press
+ * A floor's text as read-only native inputs, in the floor's own place: a long press on a post
+ * swaps its rich body for these, so the platform's own selection is the one at work — a long press
  * picks a word, and the two handles then move the ends character by character, with the system's
  * Copy / Select All menu. `readonly` keeps `EditText.setTextIsSelectable` on Android, which is the
  * character-precise selection `nsh/base`'s text view does not offer there.
@@ -75,26 +80,34 @@ export type InlineTextSelectApi = { finish: () => void };
  * platform's code and that report is what puts the rich body back. A press outside the text, or
  * Back, closes it through the same path.
  *
- * The floor keeps its size while the body is a field. The text is laid out twice: an invisible
- * copy in the layout's own flow, at the body's size and leading, is what holds the floor's height
- * and its wrapping column (the text engine wraps it, so the field breaks lines in the same places);
- * the field fills that height, and the platform spreads its lines to fill it (the experiment
- * runtime's `fitLines`, which is what a read-only selectable field in a box taller than its own
- * text does). Its leading is then the body's own, line for line.
+ * A field carries one size and one weight, while a first post's headings are set differently from
+ * its body: each run the page styles separately is a field of its own, kept flush against the next
+ * (a `</h1>` is a line break, so nothing may go between them). The floor then reads exactly as it
+ * did, line for line, and each field's own leading is fitted to the app's (`fitLines` in the
+ * runtime): the invisible copy in the layout's flow is the height and the wrapping column, and the
+ * field over it is what the platform lays out.
  */
 export function InlineTextSelect(props: {
-  text: string;
+  blocks: TextBlock[];
   onDone?: () => void;
   /** Handed to the page around it, so a press elsewhere closes the selection the way a copy does. */
   onApi?: (api: InlineTextSelectApi) => void;
 }) {
-  const size = displaySettings().body;
-  const lineHeight = Math.round(size * displaySettings().spacing);
-  let field: InputRef | null = null;
+  const body = displaySettings().body;
+  // The body's own leading: the rich body sets the line height on its root, which a heading
+  // inherits, so every run of a floor is led the same way whatever its size.
+  const lineHeight = Math.round(body * displaySettings().spacing);
+  const fields: (InputRef | null)[] = [];
   const finish = createFinish(
     () => {
-      field?.setSelection(0, 0);
-      field?.blur();
+      for (const field of fields) {
+        try {
+          field?.setSelection(0, 0);
+          field?.blur();
+        } catch {
+          // Already gone: nothing of this field is left to clear.
+        }
+      }
     },
     () => props.onDone?.(),
   );
@@ -102,43 +115,52 @@ export function InlineTextSelect(props: {
   const selectionEnded = createSelectionEnd(finish);
   return (
     <View testID="inline-select-block" style={{ alignSelf: "stretch" }}>
-      {/* The body's own text, invisible: it is the height and the wrapping column the floor had,
-          so the floor does not move when its rich body gives way to the field. */}
-      <Text style={{ fontSize: size, lineHeight, opacity: 0 }}>{props.text}</Text>
-      <View
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          top: 0,
-          bottom: 0,
-        }}
-      >
-        <Input
-          testID="inline-select-body"
-          ref={(n: InputRef | null) => {
-            field = n;
-          }}
-          multiline={true}
-          readonly={true}
-          value={props.text}
-          scrollbar={false}
-          onSelectionChange={(e: { start: number; end: number }) => selectionEnded(e.start, e.end)}
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: 0,
-            bottom: 0,
-            fontSize: size,
-            color: palette().text,
-            backgroundColor: "transparent",
-            paddingHorizontal: 0,
-            paddingVertical: 0,
-            selectionColor: SELECTION_BLUE,
-          }}
-        />
-      </View>
+      {props.blocks.map((block, index) => {
+        const size = block.heading ? HEADING_SIZE : body;
+        const weight = block.heading ? HEADING_WEIGHT : 400;
+        return (
+          <View style={{ alignSelf: "stretch" }}>
+            {/* The body's own text, invisible: it is the height and the wrapping column the floor
+                had, so the floor does not move when its rich body gives way to the field. */}
+            <Text style={{ fontSize: size, lineHeight, fontWeight: weight, opacity: 0 }}>{block.text}</Text>
+            <View
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: 0,
+              }}
+            >
+              <Input
+                testID={index === 0 ? "inline-select-body" : `inline-select-body-${index}`}
+                ref={(n: InputRef | null) => {
+                  fields[index] = n;
+                }}
+                multiline={true}
+                readonly={true}
+                value={block.text}
+                scrollbar={false}
+                onSelectionChange={(e: { start: number; end: number }) => selectionEnded(e.start, e.end)}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  fontSize: size,
+                  fontWeight: weight,
+                  color: palette().text,
+                  backgroundColor: "transparent",
+                  paddingHorizontal: 0,
+                  paddingVertical: 0,
+                  selectionColor: SELECTION_BLUE,
+                }}
+              />
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 }

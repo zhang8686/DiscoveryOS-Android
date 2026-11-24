@@ -571,6 +571,42 @@ export function htmlToText(html: string): string {
 }
 
 /**
+ * A floor's text cut into the runs a selection screen can draw: a field has one size and one
+ * weight, so a heading the page sets differently has to be a field of its own.
+ */
+export type TextBlock = { text: string; heading: boolean };
+
+/**
+ * The floor's HTML as text blocks, in reading order: a first post's headings (h1–h3, the ones
+ * `OP_TITLE_STYLES` sets) keep their own run, and everything else is the body's. A floor without
+ * headings — every reply, and a first post whose top is not a heading — is one block, exactly as
+ * `htmlToText` gives it.
+ *
+ * The blocks sit flush: `</h1>` is one line break, which is a line's leading when the text is
+ * drawn as one run, so nothing may be put between them.
+ */
+export function htmlToBlocks(html: string): TextBlock[] {
+  const marked = html
+    .replace(/<h([1-3])\b[^>]*>/gi, "\u0001")
+    .replace(/<\/h[1-3]\s*>/gi, "\u0002");
+  const blocks: TextBlock[] = [];
+  let heading = false;
+  for (const part of marked.split(/([\u0001\u0002])/)) {
+    if (part === "\u0001") {
+      heading = true;
+      continue;
+    }
+    if (part === "\u0002") {
+      heading = false;
+      continue;
+    }
+    const text = htmlToText(part);
+    if (text) blocks.push({ text, heading });
+  }
+  return blocks;
+}
+
+/**
  * The floor a 4d4y `findpost` link opens (`redirect.php?goto=findpost&pid=…&ptid=…`, the arrow
  * of a quote): its post and thread. Any other link gives `undefined`.
  */

@@ -754,7 +754,7 @@ export function Forum(props: {
   const foldPan = createAnimatedValue(0);
   /** Applies a horizontal swipe over the columns: opens the folded column, or folds the open one. */
   function applyFoldSwipe(dx: number, vx: number): void {
-    const intent = foldSwipeIntent(dx, vx, windowSize().width);
+    const intent = foldSwipeIntent(dx, vx);
     if (intent === "open" && channelsCollapsed()) toggleChannelsCollapsed();
     else if (intent === "fold" && !channelsCollapsed()) toggleChannelsCollapsed();
   }
@@ -2426,7 +2426,10 @@ export function Forum(props: {
             // Nothing draws the drag (a fold is a step, not a slide): the value only has to go
             // back to rest for the next gesture to measure from there.
             foldPan.set(0);
-            if (e?.cancelled) return;
+            // A window too narrow for the full column has one state only (the rail), so a fold
+            // there would be saved but never seen. Portrait's pane is the caller that can fold
+            // at any width: it lays the column out either way.
+            if (e?.cancelled || !wide()) return;
             applyFoldSwipe(e?.translation?.x ?? 0, e?.velocity?.x ?? 0);
           }}
           style={{ flexDirection: "row", alignSelf: "stretch" }}

@@ -15,19 +15,19 @@ test("a window narrower than the breakpoint is a rail even when not folded", () 
 });
 
 test("a right swipe opens the column and a left one folds it", () => {
-  expect(foldSwipeIntent(80, 0, 1200)).toBe("open");
-  expect(foldSwipeIntent(0, 900, 1200)).toBe("open");
-  expect(foldSwipeIntent(-80, 0, 1200)).toBe("fold");
-  expect(foldSwipeIntent(0, -900, 1200)).toBe("fold");
+  expect(foldSwipeIntent(80, 0)).toBe("open");
+  expect(foldSwipeIntent(0, 900)).toBe("open");
+  expect(foldSwipeIntent(-80, 0)).toBe("fold");
+  expect(foldSwipeIntent(0, -900)).toBe("fold");
 });
 
 test("a short, slow drag asks for nothing", () => {
-  expect(foldSwipeIntent(40, 300, 1200)).toBe(null);
-  expect(foldSwipeIntent(-40, -300, 1200)).toBe(null);
-  expect(foldSwipeIntent(0, 0, 1200)).toBe(null);
+  expect(foldSwipeIntent(40, 300)).toBe(null);
+  expect(foldSwipeIntent(-40, -300)).toBe(null);
+  expect(foldSwipeIntent(0, 0)).toBe(null);
 });
 
-test("a narrow window has no fold to swing: a swipe there asks for nothing", () => {
-  expect(foldSwipeIntent(200, 1200, RAIL_BELOW - 1)).toBe(null);
-  expect(foldSwipeIntent(-200, -1200, RAIL_BELOW - 1)).toBe(null);
+test("the gesture reads the same at every width: the pane folds a narrow window too", () => {
+  expect(foldSwipeIntent(200, 1200)).toBe("open");
+  expect(foldSwipeIntent(-200, -1200)).toBe("fold");
 });

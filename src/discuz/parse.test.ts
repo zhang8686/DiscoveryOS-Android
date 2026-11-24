@@ -1,5 +1,5 @@
 import { expect, test } from "nsh/test";
-import { linkifyBareUrls, htmlToText, parsePmConversation, parsePmUsers, absolutize, floorFromLink, captureGroups, htmlDecode, parseBookmarks, parseChannels, parseNotices, parseMyReplies, parseMyThreads, unescapeNumericEntities, parsePosts, parseProfile, parseReplies, parseSearchResults, parseUser, mergePage, fixImages, removePercentEncoding, trimLeadingBlanks, threadIdFromLink, parseThreadPageInfo, parseLastPage, showAttachedPictures } from "./parse";
+import { linkifyBareUrls, htmlToBlocks, htmlToText, parsePmConversation, parsePmUsers, absolutize, floorFromLink, captureGroups, htmlDecode, parseBookmarks, parseChannels, parseNotices, parseMyReplies, parseMyThreads, unescapeNumericEntities, parsePosts, parseProfile, parseReplies, parseSearchResults, parseUser, mergePage, fixImages, removePercentEncoding, trimLeadingBlanks, threadIdFromLink, parseThreadPageInfo, parseLastPage, showAttachedPictures } from "./parse";
 
 test("captureGroups returns one match's groups, or every whole match", () => {
   expect(captureGroups("a1b", "a(\\d)b", true)).toEqual(["1"]);
@@ -443,6 +443,28 @@ test("quoting keeps the words and drops the markup's line breaks and indentation
 
 test("a run of blank lines in a quote is one blank line", () => {
   expect(htmlToText("一<br><br><br><br>二")).toBe("一\n\n二");
+});
+
+test("a floor without headings is one block, the text every reply has", () => {
+  const html = "<div>第一段</div><div>第二段</div>";
+  expect(htmlToBlocks(html)).toEqual([{ text: htmlToText(html), heading: false }]);
+});
+
+test("a first post's heading keeps its own run, and the body follows as its own", () => {
+  const html = "<h1>[Discovery] 昨天用了你们一直在安利的 workbuddy</h1><p>我一直想把我家的电信IPTV</p>";
+  expect(htmlToBlocks(html)).toEqual([
+    { text: "[Discovery] 昨天用了你们一直在安利的 workbuddy", heading: true },
+    { text: "我一直想把我家的电信IPTV", heading: false },
+  ]);
+});
+
+test("only the sizes the first post's style sets are runs of their own", () => {
+  // `OP_TITLE_STYLES` gives h1–h3 a size and weight; h4 and down keep the body's.
+  expect(htmlToBlocks("<h3>三</h3>甲")).toEqual([
+    { text: "三", heading: true },
+    { text: "甲", heading: false },
+  ]);
+  expect(htmlToBlocks("<h4>四</h4>甲")).toEqual([{ text: "四\n甲", heading: false }]);
 });
 
 test("notice.php's feed keeps every kind of notice and its floor, never the pm list", () => {

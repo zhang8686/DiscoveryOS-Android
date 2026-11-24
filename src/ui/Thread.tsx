@@ -4,7 +4,7 @@ import { Dialog, TextView } from "nsh/base";
 import { BackHandler } from "nsh/mobile";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
-import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
+import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToBlocks, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
 import { attachmentIsPicture } from "../discuz/attachments";
 import { draftToPost, postToDraft, replyQuoteInDraft, splitDraftQuote } from "../discuz/quote";
 import { downloadAttachment } from "./downloads";
@@ -876,7 +876,7 @@ export function Thread(props: {
               // press anywhere else, puts the rich body back (see `onPress` above).
               inlineSelect() === item().seq ? (
                 <InlineTextSelect
-                  text={htmlToText(bodyHtml(item()))}
+                  blocks={htmlToBlocks(bodyHtml(item()))}
                   onDone={() => inlineSelect.set(null)}
                   onApi={(api) => {
                     endInlineSelect = api.finish;
