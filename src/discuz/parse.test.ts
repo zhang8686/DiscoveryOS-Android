@@ -445,34 +445,54 @@ test("a run of blank lines in a quote is one blank line", () => {
   expect(htmlToText("一<br><br><br><br>二")).toBe("一\n\n二");
 });
 
-test("a floor without headings is one block, the text every reply has", () => {
-  const html = "<div>第一段</div><div>第二段</div>";
-  expect(htmlToBlocks(html)).toEqual([{ text: htmlToText(html), heading: false }]);
+test("each paragraph of a floor is a block of its own", () => {
+  // The page puts its block gap between them; a field cannot make one at its top, so the screen
+  // draws each paragraph in a field and the gap around it.
+  expect(htmlToBlocks("<div>第一段</div><div>第二段</div>")).toEqual([
+    { text: "第一段", heading: 0, quote: false },
+    { text: "第二段", heading: 0, quote: false },
+  ]);
 });
 
-test("a reply keeps one block even when it carries a heading tag", () => {
+test("a reply's heading tag is body text, in a block of its own", () => {
   // Only a first post's headings are set apart (`OP_TITLE_STYLES`); a reply draws its text the
-  // body's way throughout, so the selection screen must not split it and size a run differently.
+  // body's way throughout, so no run of it takes a heading's size.
   expect(htmlToBlocks("<h1>引用的标题</h1><p>回复正文</p>")).toEqual([
-    { text: "引用的标题\n\n回复正文", heading: false },
+    { text: "引用的标题", heading: 0, quote: false },
+    { text: "回复正文", heading: 0, quote: false },
   ]);
 });
 
 test("a first post's heading keeps its own run, and the body follows as its own", () => {
   const html = "<h1>[Discovery] 昨天用了你们一直在安利的 workbuddy</h1><p>我一直想把我家的电信IPTV</p>";
   expect(htmlToBlocks(html, true)).toEqual([
-    { text: "[Discovery] 昨天用了你们一直在安利的 workbuddy", heading: true },
-    { text: "我一直想把我家的电信IPTV", heading: false },
+    { text: "[Discovery] 昨天用了你们一直在安利的 workbuddy", heading: 1, quote: false },
+    { text: "我一直想把我家的电信IPTV", heading: 0, quote: false },
   ]);
 });
 
 test("only the sizes the first post's style sets are runs of their own", () => {
   // `OP_TITLE_STYLES` gives h1–h3 a size and weight; h4 and down keep the body's.
   expect(htmlToBlocks("<h3>三</h3>甲", true)).toEqual([
-    { text: "三", heading: true },
-    { text: "甲", heading: false },
+    { text: "三", heading: 3, quote: false },
+    { text: "甲", heading: 0, quote: false },
   ]);
-  expect(htmlToBlocks("<h4>四</h4>甲", true)).toEqual([{ text: "四\n甲", heading: false }]);
+  expect(htmlToBlocks("<h4>四</h4>甲", true)).toEqual([
+    { text: "四", heading: 0, quote: false },
+    { text: "甲", heading: 0, quote: false },
+  ]);
+});
+
+test("a quote's paragraphs are blocks of their own, marked as quoted", () => {
+  // A quote is indented under a bar and drawn a little lighter: the screen has to know which
+  // blocks are inside it, and where it ends.
+  const html = "<div>正文</div><blockquote><p>引用一</p><p>引用二</p></blockquote><div>结尾</div>";
+  expect(htmlToBlocks(html, true)).toEqual([
+    { text: "正文", heading: 0, quote: false },
+    { text: "引用一", heading: 0, quote: true },
+    { text: "引用二", heading: 0, quote: true },
+    { text: "结尾", heading: 0, quote: false },
+  ]);
 });
 
 test("notice.php's feed keeps every kind of notice and its floor, never the pm list", () => {

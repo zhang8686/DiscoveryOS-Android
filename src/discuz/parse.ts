@@ -571,42 +571,77 @@ export function htmlToText(html: string): string {
 }
 
 /**
- * A floor's text cut into the runs a selection screen can draw: a field has one size and one
- * weight, so a heading the page sets differently has to be a field of its own.
+ * A floor's text cut into the runs a selection screen can draw, one for each block the page lays
+ * out on its own: a field carries one size, one weight and one leading, so a heading, a paragraph
+ * and a quoted passage each need a field of their own — and the space between them is the page's
+ * own block gap, which a field cannot make at its top.
  */
-export type TextBlock = { text: string; heading: boolean };
+export type TextBlock = {
+  text: string;
+  /** `0` for body text, `1`–`3` for a heading of that level (`OP_TITLE_STYLES` sets those). */
+  heading: 0 | 1 | 2 | 3;
+  /** Inside a quote (`<blockquote>`, Discuz's `[quote]`): indented under a bar, a little lighter. */
+  quote: boolean;
+};
 
 /**
- * The floor's HTML as text blocks, in reading order. A first post's headings (h1–h3, the sizes
- * `OP_TITLE_STYLES` sets) keep a run of their own when `headings` is on; everything else is the
- * body's, in one block. A floor without headings — every reply, and a first post whose top is not
- * a heading — is one block, exactly as `htmlToText` gives it.
+ * The floor's HTML as blocks, in reading order: one per paragraph, heading and quoted paragraph,
+ * with the level of a heading the page styles (`headings` off leaves every block body-sized, as a
+ * reply draws them) and whether it is inside a quote.
  *
- * The blocks sit flush: `</h1>` is one line break, which is a line's leading when the text is
- * drawn as one run, so nothing may be put between them.
+ * The text of a block is `htmlToText`'s: the page's tags are taken off, entities decoded, runs of
+ * spaces folded, and a block's own line breaks kept. What marks a block here is the same markup
+ * that breaks the page's lines — `</div>`, `</p>`, `<br>`, the end of a heading — so a block
+ * begins and ends where the page's own does, and the blocks carry no gap of their own: the screen
+ * puts the page's gap between them.
  */
 export function htmlToBlocks(html: string, headings = false): TextBlock[] {
-  if (!headings) {
-    const text = htmlToText(html);
-    return text ? [{ text, heading: false }] : [];
-  }
-  const marked = html
-    .replace(/<h([1-3])\b[^>]*>/gi, "\u0001")
-    .replace(/<\/h[1-3]\s*>/gi, "\u0002");
+  // A heading's bounds and a quote's, as characters that survive `htmlToText` (it strips tags, and
+  // these are not tags): a heading opens on a line of its own and closes onto the next, as its
+  // tags do for the page.
+  const marked = headings
+    ? html
+        .replace(/<h([1-3])\b[^>]*>/gi, "\n\u0001$1\u0002")
+        .replace(/<\/h[1-3]\s*>/gi, "\u0003\n")
+    : html;
+  const quoted = marked
+    .replace(/<blockquote\b[^>]*>/gi, "\n\u0004")
+    .replace(/<\/blockquote\s*>/gi, "\u0005\n");
+  const text = htmlToText(quoted);
   const blocks: TextBlock[] = [];
-  let heading = false;
-  for (const part of marked.split(/([\u0001\u0002])/)) {
-    if (part === "\u0001") {
-      heading = true;
-      continue;
+  let heading: 0 | 1 | 2 | 3 = 0;
+  let quotes = 0;
+  let run = "";
+  const flush = (): void => {
+    const line = run.replace(/[\u0001-\u0005]/g, "").trim();
+    if (line) blocks.push({ text: line, heading, quote: quotes > 0 });
+    run = "";
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "\u0001") {
+      // The level rides on the next character.
+      flush();
+      heading = (Number(text[i + 1]) || 1) as 1 | 2 | 3;
+      i++;
+    } else if (ch === "\u0002") {
+      // The level is read: nothing more.
+    } else if (ch === "\u0003") {
+      flush();
+      heading = 0;
+    } else if (ch === "\u0004") {
+      flush();
+      quotes++;
+    } else if (ch === "\u0005") {
+      flush();
+      if (quotes > 0) quotes--;
+    } else if (ch === "\n") {
+      flush();
+    } else {
+      run += ch;
     }
-    if (part === "\u0002") {
-      heading = false;
-      continue;
-    }
-    const text = htmlToText(part);
-    if (text) blocks.push({ text, heading });
   }
+  flush();
   return blocks;
 }
 

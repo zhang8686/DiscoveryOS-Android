@@ -18,7 +18,7 @@ export default function InlineSelectHarness() {
       <Text accessibilityLabel="楼层标题">楼层标题</Text>
       {open() ? (
         <InlineTextSelect
-          blocks={[{ text: TEXT, heading: false }]}
+          blocks={[{ text: TEXT, heading: 0, quote: false }]}
           onDone={() => open.set(false)}
           onApi={(api) => {
             closeSelect = api.finish;

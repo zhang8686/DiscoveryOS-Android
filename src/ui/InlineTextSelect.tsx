@@ -11,6 +11,42 @@ const SELECTION_BLUE = "#4285F4";
 export const HEADING_SIZE = 16;
 export const HEADING_WEIGHT = 500;
 
+// The rich body's own measure (`crates/nsh-base/src/text_view/view.rs`): every block sits in a
+// column whose gap is `BODY_SIZE * 0.75`, and a heading's room above it is its own size times a
+// factor — `0.6` after another heading, and `1.1` / `1.6` / `1.4` after a block — minus that gap.
+// The two are one margin here: what a heading asks for, never less than the column's gap.
+const BODY_SIZE = 15;
+const BLOCK_GAP = BODY_SIZE * 0.75;
+const HEADINGS = {
+  1: { size: 27, line: 1.25, tracking: -0.02, above: 1.1 },
+  2: { size: 20, line: 1.35, tracking: -0.012, above: 1.6 },
+  3: { size: 17, line: 1.35, tracking: -0.012, above: 1.4 },
+} as const;
+/** A quote's bar and the room between it and the text (`border_l(2)` and `ps(BODY_SIZE * 0.9)`). */
+const QUOTE_BAR = 2;
+const QUOTE_INDENT = BODY_SIZE * 0.9;
+/** A quoted passage is drawn in the text's color at four fifths of it. */
+const QUOTE_OPACITY = 0.8;
+
+/** `#rrggbb` at an opacity, as a color a style takes. */
+function faint(hex: string, opacity: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${opacity})`;
+}
+
+/** One block as the screen draws it: its own type, and the room the page puts above it. */
+export type Run = {
+  block: TextBlock;
+  size: number;
+  weight: number;
+  /** The page's line height for this block, which the field is given (`setLineSpacing`). */
+  line: number;
+  /** The page's letter spacing for this block (a heading's is negative). */
+  tracking: number;
+  /** The room above it, in the page's own terms (0 for a group's first block). */
+  gap: number;
+};
+
 /**
  * How a selection screen closes: `clear` drops the platform's selection and gives the field's
  * focus up, and `done` — which takes the field away — runs a moment later, so the platform has
@@ -66,6 +102,30 @@ export function createSelectionEnd(onEnd: () => void) {
   };
 }
 
+/** The blocks as runs: the body's own type, a heading's own, and the page's gap between them. */
+export function toRuns(blocks: TextBlock[], body: number, bodyLine: number): Run[] {
+  const runs: Run[] = [];
+  let previous: TextBlock | null = null;
+  for (const block of blocks) {
+    const h = block.heading ? HEADINGS[block.heading] : null;
+    const above = h
+      ? Math.max(h.size * (previous?.heading ? 0.6 : h.above), BLOCK_GAP)
+      : BLOCK_GAP;
+    runs.push({
+      block,
+      size: h ? HEADING_SIZE : body,
+      weight: h ? HEADING_WEIGHT : 400,
+      line: h ? h.size * h.line : bodyLine,
+      tracking: h ? h.size * h.tracking : 0,
+      gap: previous ? above : 0,
+    });
+    previous = block;
+  }
+  // A group's first run starts at the group's own margin, not its block gap.
+  if (runs.length > 0) runs[0].gap = 0;
+  return runs;
+}
+
 /** What a selection screen lets the page around it do: close it, as a copy does. */
 export type InlineTextSelectApi = { finish: () => void };
 
@@ -80,12 +140,12 @@ export type InlineTextSelectApi = { finish: () => void };
  * platform's code and that report is what puts the rich body back. A press outside the text, or
  * Back, closes it through the same path.
  *
- * A field carries one size and one weight, while a first post's headings are set differently from
- * its body: each run the page styles separately is a field of its own, kept flush against the next
- * (a `</h1>` is a line break, so nothing may go between them). The floor then reads exactly as it
- * did, line for line, and each field's own leading is fitted to the app's (`fitLines` in the
- * runtime): the invisible copy in the layout's flow is the height and the wrapping column, and the
- * field over it is what the platform lays out.
+ * A field carries one size, one weight and one leading, while the page gives its paragraphs,
+ * headings and quotes each their own: so every block is a field, kept in the page's own geometry
+ * — the same type, the same leading handed to the platform (`setLineSpacing`, which a field's
+ * style cannot ask for), the same gap above, and a quote's bar and indent around it. The invisible
+ * copy in the layout's flow is the height and the wrapping column, so the floor does not move and
+ * the lines break where they did; the field over it is what the platform lays out.
  */
 export function InlineTextSelect(props: {
   blocks: TextBlock[];
@@ -95,8 +155,8 @@ export function InlineTextSelect(props: {
 }) {
   const body = displaySettings().body;
   // The body's own leading: the rich body sets the line height on its root, which a heading
-  // inherits, so every run of a floor is led the same way whatever its size.
-  const lineHeight = Math.round(body * displaySettings().spacing);
+  // inherits for its size (the field is given this block's leading, not the body's).
+  const bodyLine = Math.round(body * displaySettings().spacing);
   const fields: (InputRef | null)[] = [];
   const finish = createFinish(
     () => {
@@ -113,60 +173,89 @@ export function InlineTextSelect(props: {
   );
   props.onApi?.({ finish });
   const selectionEnded = createSelectionEnd(finish);
-  // A floor with nothing to select still gets one empty run, so the swap never leaves the list
+  // A floor with nothing to select still keeps one empty run, so the swap never leaves the list
   // with a hole where the post was.
-  const blocks = props.blocks.length > 0 ? props.blocks : [{ text: "", heading: false }];
+  const blocks = props.blocks.length > 0 ? props.blocks : [{ text: "", heading: 0 as const, quote: false }];
+  const runs = toRuns(blocks, body, bodyLine);
+  // Quotes sit under one bar: the runs of one quote are a group of their own, so the bar runs on
+  // past the gaps between them instead of breaking at each.
+  const groups: { quote: boolean; gap: number; runs: Run[] }[] = [];
+  for (const run of runs) {
+    const last = groups[groups.length - 1];
+    if (last && last.quote === run.block.quote) last.runs.push(run);
+    else groups.push({ quote: run.block.quote, gap: run.gap, runs: [run] });
+  }
+  let index = 0;
   return (
-    <View testID="inline-select-block" style={{ alignSelf: "stretch" }}>
-      {blocks.map((block, index) => {
-        const size = block.heading ? HEADING_SIZE : body;
-        const weight = block.heading ? HEADING_WEIGHT : 400;
-        return (
-          <View style={{ alignSelf: "stretch" }}>
-            {/* The body's own text, invisible: it is the height and the wrapping column the floor
-                had, so the floor does not move when its rich body gives way to the field. */}
-            <Text style={{ fontSize: size, lineHeight, fontWeight: weight, opacity: 0 }}>{block.text}</Text>
-            <View
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                top: 0,
-                bottom: 0,
-              }}
-            >
-              <Input
-                testID={index === 0 ? "inline-select-body" : `inline-select-body-${index}`}
-                ref={(n: InputRef | null) => {
-                  fields[index] = n;
-                }}
-                multiline={true}
-                readonly={true}
-                value={block.text}
-                scrollbar={false}
-                onSelectionChange={(e: { start: number; end: number }) => selectionEnded(e.start, e.end)}
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  bottom: 0,
-                  fontSize: size,
-                  fontWeight: weight,
-                  // The body's leading, handed to the field: the runtime lays it on the lines
-                  // (`setLineSpacing`), which a field cannot ask for in a style of its own.
-                  lineHeight,
-                  color: palette().text,
-                  backgroundColor: "transparent",
-                  paddingHorizontal: 0,
-                  paddingVertical: 0,
-                  selectionColor: SELECTION_BLUE,
-                }}
-              />
-            </View>
-          </View>
-        );
-      })}
+    <View testID="inline-select-block" style={{ alignSelf: "stretch", minHeight: bodyLine }}>
+      {groups.map((group) => (
+        <View
+          style={{
+            alignSelf: "stretch",
+            marginTop: group.gap,
+            ...(group.quote
+              ? {
+                  borderLeftWidth: QUOTE_BAR,
+                  borderLeftColor: palette().border,
+                  paddingLeft: QUOTE_INDENT,
+                }
+              : {}),
+          }}
+        >
+          {group.runs.map((run, at) => {
+            const fieldIndex = index++;
+            const color = run.block.quote ? faint(palette().text, QUOTE_OPACITY) : palette().text;
+            return (
+              // A group's first run starts at the group's own margin: its gap is already there.
+              <View style={{ alignSelf: "stretch", marginTop: at === 0 ? 0 : run.gap }}>
+                {/* The page's own text, invisible: it is the height and the wrapping column the
+                    floor had, so the floor does not move when its rich body gives way to the
+                    field, and the field breaks its lines where the page did. */}
+                <Text
+                  style={{
+                    fontSize: run.size,
+                    lineHeight: run.line,
+                    fontWeight: run.weight,
+                    letterSpacing: run.tracking,
+                    opacity: 0,
+                  }}
+                >
+                  {run.block.text}
+                </Text>
+                <Input
+                  testID={fieldIndex === 0 ? "inline-select-body" : `inline-select-body-${fieldIndex}`}
+                  ref={(n: InputRef | null) => {
+                    fields[fieldIndex] = n;
+                  }}
+                  multiline={true}
+                  readonly={true}
+                  value={run.block.text}
+                  scrollbar={false}
+                  onSelectionChange={(e: { start: number; end: number }) => selectionEnded(e.start, e.end)}
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    fontSize: run.size,
+                    fontWeight: run.weight,
+                    letterSpacing: run.tracking,
+                    // The page's leading, handed to the field: the runtime lays it on the lines
+                    // (`setLineSpacing`), which a field cannot ask for in a style of its own.
+                    lineHeight: run.line,
+                    color,
+                    backgroundColor: "transparent",
+                    paddingHorizontal: 0,
+                    paddingVertical: 0,
+                    selectionColor: SELECTION_BLUE,
+                  }}
+                />
+              </View>
+            );
+          })}
+        </View>
+      ))}
     </View>
   );
 }

@@ -1,5 +1,5 @@
 import { expect, open, test } from "nsh/test";
-import { createFinish, createSelectionEnd } from "./InlineTextSelect";
+import { createFinish, createSelectionEnd, toRuns } from "./InlineTextSelect";
 
 test("a long press on the body opens the floor's text as an input the platform selects in", async () => {
   const app = await open("./inlineSelectHarness.tsx");
@@ -54,6 +54,37 @@ test("a copy ends the selection: the platform collapses it, and the body comes b
   // A later caret report is nothing new: the body is already back.
   ended(9, 9);
   expect(closes).toBe(1);
+});
+
+test("each block takes the page's own leading and the page's own room above it", () => {
+  const runs = toRuns(
+    [
+      { text: "标题", heading: 1, quote: false },
+      { text: "正文", heading: 0, quote: false },
+      { text: "小标题", heading: 2, quote: false },
+      { text: "又问一句", heading: 2, quote: false },
+      { text: "引用", heading: 0, quote: true },
+    ],
+    15,
+    23,
+  );
+  // A heading is led by its own size, not the body's: h1 is 27 × 1.25, drawn at 16pt as the page
+  // draws it (`OP_TITLE_STYLES` gives it the size; the leading stays the heading's own).
+  expect(runs[0].size).toBe(16);
+  expect(runs[0].line).toBe(33.75);
+  // The first block of all has nothing above it.
+  expect(runs[0].gap).toBe(0);
+  // A block after a block takes the column's gap.
+  expect(runs[1].line).toBe(23);
+  expect(runs[1].gap).toBe(11.25);
+  // A heading after a block takes its room above (h2: 20 × 1.6 = 32).
+  expect(Math.round(runs[2].gap)).toBe(32);
+  expect(runs[2].line).toBe(27);
+  // A heading after a heading takes less (0.6 of its size).
+  expect(Math.round(runs[3].gap)).toBe(12);
+  // A block after a heading takes the column's gap, not the heading's room.
+  expect(runs[4].gap).toBe(11.25);
+  expect(runs[4].block.quote).toBe(true);
 });
 
 test("closing clears the selection off the gesture's dispatch, then puts the body back", async () => {
