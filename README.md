@@ -7,7 +7,7 @@
 
 > 本项目为**非官方**客户端，与 4d4y.com、Comsenz / Discuz! 无关联，也未获得其认可或赞助。论坛内容与账号数据归论坛及其用户所有，使用请遵守论坛规则。
 >
-> **最新版本 v1.2.2**（2026-11-24）：长按选字直接发生在正文上，字体、字号、行高、段落间距、标题与引用样式全由同一份排版画出，进入和退出都没有视觉位移，选区可跨段；首屏新增左滑折叠板块栏；正文页只保留右滑返回；查看器左右切换与下滑关闭恢复，看图更快。详见 [v1.2.2 更新说明](docs/更新说明-v1.2.2.md)；安装包见 [Releases](https://github.com/zhang8686/DiscoveryOS-Android/releases)。
+> **最新版本 v1.2.2-1**（2026-11-24）：修好网页端「引用」回复只剩作者时间的问题，新增「回复某一楼」（带作者通知、与引用互斥）；楼层按钮排版收紧、引用图标改为空心双引号；右下悬浮按钮组可上下拖动并记住位置。v1.2.2 的正文选字、首屏左滑折叠、右滑返回、查看器手势与图片加速全部保留。详见 [v1.2.2-1 更新说明](docs/更新说明-v1.2.2-1.md)；安装包见 [Releases](https://github.com/zhang8686/DiscoveryOS-Android/releases)。
 
 ---
 
@@ -81,8 +81,8 @@
 
 | 项目 | 数值 |
 | --- | --- |
-| 当前版本 | 1.2.2（versionCode 70） |
-| APK 体积 | 约 19.6 MB（19,576,458 B，单 arm64-v8a，手机与平板共用） |
+| 当前版本 | 1.2.2-1（versionCode 71） |
+| APK 体积 | 约 19.6 MB（19,580,554 B，单 arm64-v8a，手机与平板共用） |
 | 应用自身逻辑包 | 约 492 KB（`assets/nsh/bundle.nshc`，含二维码解码器） |
 | 应用图标 | 约 13 KB |
 | 主要体积来源 | NSH 运行时 `lib/arm64-v8a/libnsh.so`（原始 44.2 MB，Zopfli 压缩后约 19.1 MB） |
@@ -98,7 +98,7 @@
 
 ## 安装
 
-1. 从 [Releases](https://github.com/zhang8686/DiscoveryOS-Android/releases) 下载最新版 `DiscoveryOSX-V1.2.2-release.apk`。**手机和平板下载同一个文件**。
+1. 从 [Releases](https://github.com/zhang8686/DiscoveryOS-Android/releases) 下载最新版 `DiscoveryOSX-V1.2.2-1-release.apk`。**手机和平板下载同一个文件**。
 2. 在设备上打开该文件；首次安装时系统可能要求为安装来源开启「允许安装未知应用」，授权一次即可。
 3. 系统需为 Android 8.0 及以上，CPU 为 arm64-v8a；32 位设备不在支持范围。
 4. 论坛内容需要登录后查看，请在应用内登录 4d4y 账号。
