@@ -1,7 +1,6 @@
 import { Clipboard, cleanup, colorScheme, createAnimatedValue, createMotion, effect, keymap, List, pixelRatio, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef, type JSX } from "nsh";
 import { settleBack, settleExit, slideIn } from "./pageSlide";
-import { Dialog, TextView, type TextViewDocument } from "nsh/base";
-import { smoothDocumentBreaks } from "../discuz/smoothBreaks";
+import { Dialog, TextView } from "nsh/base";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
 import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
@@ -78,37 +77,6 @@ function cachedBodyHtml(id: string, parse: () => string): string {
   return html;
 }
 
-// Experiment (v1.2.2-2): the body is fed to TextView as a document whose line
-// breaks have been folded into text nodes, so the selection sees ONE text per
-// visual paragraph instead of one per `<br>`. Parsing the same HTML twice per
-// render is wasteful: keep the smoothed document beside the HTML cache, keyed
-// the same way (reply id + pixel width), with the same bounded recency policy.
-const docCache = new Map<string, TextViewDocument>();
-const DOC_CACHE_LIMIT = 120;
-
-// Diagnostic mode C's plain-text cache (same bounded policy).
-const plainCache = new Map<string, string>();
-
-function bodyDocument(id: string, html: string): TextViewDocument {
-  const hit = docCache.get(id);
-  if (hit !== undefined) {
-    docCache.delete(id);
-    docCache.set(id, hit);
-    return hit;
-  }
-  const doc = smoothDocumentBreaks(TextView.parseHtml(html, DISCUZ_EXTENSIONS));
-  docCache.set(id, doc);
-  if (docCache.size > DOC_CACHE_LIMIT) {
-    const drop = Math.floor(DOC_CACHE_LIMIT / 4);
-    let n = 0;
-    for (const key of docCache.keys()) {
-      if (n++ >= drop) break;
-      docCache.delete(key);
-    }
-  }
-  return doc;
-}
-
 // The thread's title shows in the header at the large size; the first post's
 // own heading (its title, in the body) takes the small size the header had.
 const OP_TITLE_STYLES = {
@@ -117,14 +85,6 @@ const OP_TITLE_STYLES = {
   heading2: { fontSize: 16, fontWeight: 500 },
   heading3: { fontSize: 16, fontWeight: 500 },
 } as const;
-
-// v1.2.2-3 DIAGNOSTIC: three body renderers, switched from the title bar, so the same floor can
-// be compared on one device. 0 = the v1.2.2-1 baseline (`html` prop, as shipped), 1 = the v1.2.2-2
-// experiment (`document` with <br> folded into text), 2 = a plain selectable View holding ONE
-// <Text> of the body's text (no TextView inline splitting at all). Module-level so it survives
-// remounts and applies to every floor at once; not persisted (a diagnostic build only).
-const DIAG_MODES = ["A:html(原版)", "B:document(实验)", "C:单Text"] as const;
-const diagMode = signal(0);
 
 // `signedIn` gates what needs an account: the favorite star, quoting and replying.
 // `onOpenThread` takes a press on a link to another 4d4y thread; `onBack` shows a Back control
@@ -337,98 +297,6 @@ export function Thread(props: {
   function drawnBody(r: Reply): string {
     attachedPictureRevision();
     return showAttachedPictures(bodyHtml(r), attachedPicture);
-  }
-
-  /** The experiment's document: the drawn body read into a TextView document with every `<br>`
-   *  folded into a text node's "\n". The attachment revision is part of the key so a picture
-   *  that arrives after the floor first draws still shows up in the document. */
-  function drawnDocument(r: Reply): TextViewDocument {
-    const revision = attachedPictureRevision();
-    return bodyDocument(`${r.id}@${bodyImagePx()}@${revision}`, drawnBody(r));
-  }
-
-  /** Mode C's body: the drawn body as plain text, shown in a single selectable Text. Cached by
-   *  reply + attachment revision so scrolling a virtualized list does not re-run the HTML strip. */
-  function drawnPlain(r: Reply): string {
-    const revision = attachedPictureRevision();
-    const key = `${r.id}@${bodyImagePx()}@${revision}`;
-    const hit = plainCache.get(key);
-    if (hit !== undefined) {
-      plainCache.delete(key);
-      plainCache.set(key, hit);
-      return hit;
-    }
-    const value = htmlToText(drawnBody(r));
-    plainCache.set(key, value);
-    if (plainCache.size > HTML_CACHE_LIMIT) {
-      const drop = Math.floor(HTML_CACHE_LIMIT / 4);
-      let n = 0;
-      for (const k of plainCache.keys()) {
-        if (n++ >= drop) break;
-        plainCache.delete(k);
-      }
-    }
-    return value;
-  }
-
-  /** v1.2.2-3 DIAGNOSTIC body: A = v1.2.2-1's `html` prop, B = the folded `document`, C = one
-   *  plain selectable Text. The mode button in the title bar cycles them; every floor redraws. */
-  function diagBody(r: Reply): JSX.Element {
-    const linkPress = (e: any) => {
-      const url: string | undefined = e?.url ?? e?.href ?? e?.link;
-      if (!url) return;
-      const floor = floorFromLink(url);
-      if (floor) {
-        openFloor(floor.pid, floor.ptid);
-        return;
-      }
-      if (isAttachmentUrl(url)) {
-        void openAttachment(r, url);
-        return;
-      }
-      if (/\.(?:jpg|jpeg|png|gif|webp|bmp)(?:[?#]|$)/i.test(url)) {
-        openPostImage(r, url, url);
-        return;
-      }
-      const tid = threadIdFromLink(url);
-      if (tid && props.onOpenThread) props.onOpenThread(tid);
-      else void openLink(url);
-    };
-    const imagePress = (e: any) => {
-      const img = e?.image ?? e;
-      const src: string = img?.src ?? "";
-      const full: string = img?.title || src;
-      if (full || src) openPostImage(r, full || src, src);
-    };
-    const rootStyle = {
-      fontSize: displaySettings().body,
-      lineHeight: Math.round(displaySettings().body * displaySettings().spacing),
-      selectionColor: "#4285F4",
-      ...(r.seq === 1 ? OP_TITLE_STYLES : {}),
-    };
-
-    // C: one TextBox, no TextView inline splitting — does per-character selection work here?
-    if (diagMode() === 2) {
-      return (
-        <View selectable={true} style={{ gap: 12, alignSelf: "stretch" }}>
-          <Text style={{ ...rootStyle, color: palette().text }}>{drawnPlain(r)}</Text>
-        </View>
-      );
-    }
-    // A and B differ only in the content prop: raw HTML (shipped) vs folded document (experiment).
-    return (
-      <View style={{ gap: 12, alignSelf: "stretch" }}>
-        <TextView
-          {...(diagMode() === 0 ? { html: drawnBody(r) } : { document: drawnDocument(r) })}
-          selectable={true}
-          styles={{ root: rootStyle }}
-          extensions={DISCUZ_EXTENSIONS}
-          renderCustom={renderDiscuzNode}
-          onImagePress={imagePress}
-          onLinkPress={linkPress}
-        />
-      </View>
-    );
   }
 
   /** Opens the viewer at one of a post's pictures: the one tapped when its HTML names it, and on
@@ -1006,14 +874,6 @@ export function Thread(props: {
         <View style={{ position: "absolute", left: 126, right: 12, top: 0, bottom: 0, justifyContent: "center", pointerEvents: "none" }}>
           <Text style={{ numberOfLines: 2, textAlign: "left", fontSize: 15, lineHeight: 19, fontWeight: 600, color: palette().text }}>{title()}</Text>
         </View>
-        {/* v1.2.2-3 DIAGNOSTIC: taps cycle the body renderer, shown on the button. */}
-        <View
-          onPress={() => diagMode.set((diagMode() + 1) % DIAG_MODES.length)}
-          accessibilityLabel="切换选字诊断模式"
-          style={{ position: "absolute", right: 10, top: isLandscape() ? 4 : 24, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: "rgba(66, 133, 244, 0.9)" }}
-        >
-          <Text style={{ fontSize: 12, fontWeight: 600, color: "#ffffff" }}>{DIAG_MODES[diagMode()]}</Text>
-        </View>
       </View>
       {/* A virtualized list: only the replies near the viewport exist, and their views are
           reused as the user scrolls. Each row reads its reply through `item()`. */}
@@ -1078,7 +938,71 @@ export function Thread(props: {
                 </View>
               </View>
             }
-            body={diagBody(item())}
+            body={
+              // The body is the selection surface itself. A long press picks a word where the finger
+              // is, the platform's two handles then move the ends character by character across
+              // paragraphs, and the floating menu (Copy, Select all, Share) is Android's. Nothing of
+              // the page is swapped for a field, so the selection state draws with the very text the
+              // reader sees: the same type, leading, paragraph sums above blocks, margins, alignment
+              // and line breaks — no second renderer to keep in step, and no empty line where one
+              // would have parted the two.
+              <View style={{ gap: 12, alignSelf: "stretch" }}>
+                <TextView
+                  html={drawnBody(item())}
+                  selectable={true}
+                  styles={{
+                    root: {
+                      fontSize: displaySettings().body,
+                      lineHeight: Math.round(displaySettings().body * displaySettings().spacing),
+                      // The system blue Android draws its own selection in (Pixel's accent).
+                      selectionColor: "#4285F4",
+                    },
+                    ...(item().seq === 1 ? OP_TITLE_STYLES : {}),
+                  }}
+                  extensions={DISCUZ_EXTENSIONS}
+                  renderCustom={renderDiscuzNode}
+                  onImagePress={(e: any) => {
+                    // A picture not in a link opens the zoomable viewer. The original (full-size)
+                    // URL the page carried rides in `title`; `src` is the compressed display copy.
+                    const img = e?.image ?? e;
+                    const src: string = img?.src ?? "";
+                    const full: string = img?.title || src;
+                    if (full || src) openPostImage(item(), full || src, src);
+                  }}
+                  onLinkPress={(e: any) => {
+                    // A 4d4y thread link opens in this column; a file the post attaches is saved to Downloads;
+                    // any other link opens in the system browser. A picture (or its attachment) opens the zoomable viewer.
+                    // A quote's arrow goes to its floor (see `openFloor`).
+                    const url: string | undefined = e?.url ?? e?.href ?? e?.link;
+                    if (!url) return;
+                    const floor = floorFromLink(url);
+                    if (floor) {
+                      openFloor(floor.pid, floor.ptid);
+                      return;
+                    }
+                    // A picture, or a Discuz attachment that is really an image, opens the zoomable viewer.
+                    if (isAttachmentUrl(url)) {
+                      void openAttachment(item(), url);
+                      return;
+                    }
+                    if (/\.(?:jpg|jpeg|png|gif|webp|bmp)(?:[?#]|$)/i.test(url)) {
+                      openPostImage(item(), url, url);
+                      return;
+                    }
+                    const tid = threadIdFromLink(url);
+                    if (tid && props.onOpenThread) {
+                      props.onOpenThread(tid);
+                    } else {
+                      void openLink(url);
+                    }
+                  }}
+                />
+                {/* External media (Bilibili, Douyin, Xiaohongshu, video sites) is not parsed or
+                    played inside the app: a press on such a link goes through onLinkPress above
+                    and opens it outside — the site's own app when one is registered for the
+                    link, the browser otherwise, the system player for a video file. */}
+              </View>
+            }
           />
         )}
       </List>
