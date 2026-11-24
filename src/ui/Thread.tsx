@@ -186,11 +186,15 @@ export function Thread(props: {
   const titleOpacity = () =>
     scrollOffset.interpolate({ inputRange: [0, 80], outputRange: [1, 0], extrapolate: "clamp" });
 
-  // A right swipe in the body goes back. `panActivation` fails the gesture on a small vertical move
-  // (so the list still scrolls and small gestures do not trigger it); only a clear, long rightward
-  // swipe counts, so it is not easy to fire by accident. A selection in the text turns it off, as
-  // that is a drag too — checked when the gesture ends rather than by taking the pan away, which
-  // would render the body again mid-gesture.
+  // A right swipe in the body goes back — and ONLY a right swipe. The pan is kept to that one way
+  // (`direction: "right"` below), so a leftward drag fails it in the native tracker before it
+  // starts: the body never slides left and a swipe that way never leaves the thread. A left swipe
+  // is how the body is read (turning pages of a picture, dragging a selection, flicking a table),
+  // and none of that should end up closing the thread. `panActivation` also fails the gesture on a
+  // small vertical move, so the list still scrolls, and only a clear, long rightward swipe counts,
+  // so it is not easy to fire by accident. A selection in the text turns it off, as that is a drag
+  // too — checked when the gesture ends rather than by taking the pan away, which would render the
+  // body again mid-gesture.
   const backPan = createAnimatedValue(0);
   const onSwipeEnd = (e: any) => {
     const dx = e?.translation?.x ?? 0;
@@ -199,8 +203,7 @@ export function Thread(props: {
     // 150 pt / 1700 pt/s pair made the back action feel like it needed a deliberate haul.
     // The page has been following the finger throughout the drag (see the transform below); on
     // release it either carries on out the same side, or springs back if the swipe did not commit.
-    if (!e?.cancelled && (dx > 60 || vx > 700)) void leave(() => props.onSwipeBack?.(), 1);
-    else if (!e?.cancelled && (dx < -60 || vx < -700)) void leave(() => props.onSwipeBack?.(), -1);
+    if (!e?.cancelled && (dx > 60 || vx > 700)) void leave(() => props.onSwipeBack?.());
     else void settleBack(backPan);
   };
 
@@ -212,18 +215,17 @@ export function Thread(props: {
     void slideIn(entrance);
   });
 
-  // Leaving carries the page on in the direction it was moving before telling the forum to close
-  // the thread, so it never vanishes in one frame and never reverses. A drag leaves from wherever
-  // the finger had already moved it to (backPan); the Back control has no drag, so it exits toward
-  // the right — the same edge the page entered from. `leaving` stops a second gesture/render from
-  // starting a second exit; the callback differs (a link's thread pops the detour, a normal one
-  // leaves the board).
+  // Leaving carries the page on out toward the right — the edge it entered from — before telling the
+  // forum to close the thread, so it never vanishes in one frame and never reverses. A drag leaves
+  // from wherever the finger had already moved it to (backPan); the Back control has no drag, so it
+  // starts from rest. `leaving` stops a second gesture/render from starting a second exit; the
+  // callback differs (a link's thread pops the detour, a normal one leaves the board).
   let leaving = false;
-  async function leave(onDone?: () => void, direction = 1) {
+  async function leave(onDone?: () => void) {
     if (leaving) return;
     leaving = true;
     try {
-      await settleExit(backPan, entrance.opacity, windowSize().width, direction);
+      await settleExit(backPan, entrance.opacity, windowSize().width, 1);
     } finally {
       // The exit is done, so a later swipe must work again: in portrait this page stays mounted
       // under the list pane and the next thread reuses this very instance — a flag left set here
@@ -737,7 +739,9 @@ export function Thread(props: {
   return (
     <View
       pan={props.onSwipeBack ? { x: backPan } : undefined}
-      panActivation={props.onSwipeBack ? { activeOffsetX: 18, failOffsetY: 10 } : undefined}
+      // `direction: "right"`: the pan activates on a rightward drag only — a leftward one fails it
+      // in the native tracker, so the body neither follows a left swipe nor closes on one.
+      panActivation={props.onSwipeBack ? { activeOffsetX: 18, failOffsetY: 10, direction: "right" } : undefined}
       onPanEnd={props.onSwipeBack ? onSwipeEnd : undefined}
       style={{
         flex: 1, alignSelf: "stretch", overflow: "hidden",
