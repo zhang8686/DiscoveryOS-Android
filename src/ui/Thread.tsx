@@ -258,11 +258,19 @@ export function Thread(props: {
   }
 
   // The pictures a post shows, read from the same transformed HTML the text view draws, so what
-  // the reader taps is exactly what the viewer's gallery holds.
+  // the reader taps is exactly what the viewer's gallery holds. Answers about attachments arrive
+  // over time and each one redraws the floors, so the map is kept PER ANSWER: entries from an
+  // earlier answer name the body as it was drawn then, are never asked for again, and would
+  // otherwise stay for as long as the thread is open (one gallery per floor per answer).
   const galleryOf = new Map<string, ReturnType<typeof postImages>>();
+  let galleryRevision = -1;
   function postPictures(r: Reply) {
-    // A floor redraws when an attachment's answer arrives, so the gallery is kept per answer too.
-    const key = `${r.id}@${attachedPictureRevision()}`;
+    const revision = attachedPictureRevision();
+    if (revision !== galleryRevision) {
+      galleryRevision = revision;
+      galleryOf.clear();
+    }
+    const key = `${r.id}@${revision}`;
     const hit = galleryOf.get(key);
     if (hit) return hit;
     const list = postImages(drawnBody(r));

@@ -33,18 +33,32 @@ export function splitFileName(name: string): { stem: string; ext: string } {
  *  request, a page, no type — is not a picture. */
 export async function attachmentIsPicture(url: string): Promise<boolean> {
   const cookie = cookieHeader();
+  // The deadline ends the request itself (`abort`), not just the wait for it: a server that keeps
+  // the connection open would otherwise hold it — and one of the download slots behind it — long
+  // after this answer gave up, while every attachment of the page piled up another.
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   const request = fetch(new URL(url, HOST_BASE).href, {
     method: "HEAD",
     headers: { "User-Agent": USER_AGENT, ...(cookie ? { Cookie: cookie } : {}) },
+    ...(controller ? { signal: controller.signal } : {}),
   }).catch(() => null);
   let response: Response | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     response = await Promise.race([
       request,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 12_000)),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => {
+          controller?.abort();
+          resolve(null);
+        }, 12_000);
+      }),
     ]);
   } catch {
     return false;
+  } finally {
+    // The answer came first, or gave up: either way the timer has nothing left to do.
+    if (timer !== undefined) clearTimeout(timer);
   }
   if (!response || !response.ok) return false;
   return /^image\//i.test(response.headers.get("content-type") ?? "");
