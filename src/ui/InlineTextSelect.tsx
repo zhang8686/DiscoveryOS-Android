@@ -78,11 +78,9 @@ export type InlineTextSelectApi = { finish: () => void };
  * The floor keeps its size while the body is a field. The text is laid out twice: an invisible
  * copy in the layout's own flow, at the body's size and leading, is what holds the floor's height
  * and its wrapping column (the text engine wraps it, so the field breaks lines in the same places);
- * the field, drawn over it, is as tall as the platform draws its own text and is centred in that
- * height, so the extra room goes above and below it in equal parts instead of collecting under the
- * last line. The field's leading is the platform's own (Android's EditText has no line height the
- * framework sets, it takes the font's), which is a little tighter than the body's — the one thing
- * here that cannot be asked for.
+ * the field fills that height, and the platform spreads its lines to fill it (the experiment
+ * runtime's `fitLines`, which is what a read-only selectable field in a box taller than its own
+ * text does). Its leading is then the body's own, line for line.
  */
 export function InlineTextSelect(props: {
   text: string;
@@ -114,7 +112,6 @@ export function InlineTextSelect(props: {
           right: 0,
           top: 0,
           bottom: 0,
-          justifyContent: "center",
         }}
       >
         <Input
@@ -128,7 +125,11 @@ export function InlineTextSelect(props: {
           scrollbar={false}
           onSelectionChange={(e: { start: number; end: number }) => selectionEnded(e.start, e.end)}
           style={{
-            alignSelf: "stretch",
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: 0,
             fontSize: size,
             color: palette().text,
             backgroundColor: "transparent",

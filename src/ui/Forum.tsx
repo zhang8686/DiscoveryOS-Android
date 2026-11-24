@@ -32,7 +32,7 @@ import { ThreadRow } from "./ThreadRow";
 import { clearFavoriteIds, isFavorite, reconcileFavorites } from "./favorites";
 import { historyEntries, isViewed, recordView } from "./history";
 import { groupHistory } from "./historyGroups";
-import { channelsCollapsed, channelsRailed, FULL_WIDTH, RAIL_BELOW, RAIL_WIDTH, toggleChannelsCollapsed } from "./channelRail";
+import { channelsCollapsed, channelsRailed, foldSwipeIntent, FULL_WIDTH, RAIL_BELOW, RAIL_WIDTH, toggleChannelsCollapsed } from "./channelRail";
 import { titleBar } from "./platform";
 import { animateSearchChange, SearchControl, TitleBar, titleBarShown, type SearchProps } from "./TitleBar";
 import { lateralSlide, M3, settleBack } from "./pageSlide";
@@ -748,6 +748,16 @@ export function Forum(props: {
   // The channel column: a rail of icons when folded or when the window is narrow.
   const railed = () => channelsRailed(windowSize().width, channelsCollapsed());
   const wide = () => windowSize().width >= RAIL_BELOW;
+  // The columns on the home screen fold by a swipe: right opens the folded one, left folds it
+  // back. The gesture never drags them (a fold is a step, not a slide), so it drives a value
+  // nothing draws.
+  const foldPan = createAnimatedValue(0);
+  /** Applies a horizontal swipe over the columns: opens the folded column, or folds the open one. */
+  function applyFoldSwipe(dx: number, vx: number): void {
+    const intent = foldSwipeIntent(dx, vx, windowSize().width);
+    if (intent === "open" && channelsCollapsed()) toggleChannelsCollapsed();
+    else if (intent === "fold" && !channelsCollapsed()) toggleChannelsCollapsed();
+  }
   // Portrait (height > width): the post-list column collapses to a rail while a thread is open,
   // mirroring how the board column folds on a narrow window. The detail then owns the width.
   const isPortrait = () => windowSize().height > windowSize().width;
@@ -2405,8 +2415,26 @@ export function Forum(props: {
           <View style={{ width: 0, height: 0 }} />
         </Overlay>
       ) : null}
-      {wantsPanes() ? null : <ChannelColumn />}
-      {wantsPanes() ? null : <ThreadsColumn />}
+      {/* The home's two columns, side by side: a right swipe over them opens the folded column
+          (its rail) and a left one folds it back, the way portrait's boards pane does with its own
+          swipe. The thread beside them keeps its own right swipe back. */}
+      {wantsPanes() ? null : (
+        <View
+          pan={{ x: foldPan }}
+          panActivation={{ activeOffsetX: 18, failOffsetY: 10 }}
+          onPanEnd={(e: any) => {
+            // Nothing draws the drag (a fold is a step, not a slide): the value only has to go
+            // back to rest for the next gesture to measure from there.
+            foldPan.set(0);
+            if (e?.cancelled) return;
+            applyFoldSwipe(e?.translation?.x ?? 0, e?.velocity?.x ?? 0);
+          }}
+          style={{ flexDirection: "row", alignSelf: "stretch" }}
+        >
+          <ChannelColumn />
+          <ThreadsColumn />
+        </View>
+      )}
       {/* Column 3: the open thread. Under the title bar it extends up into the bar (a negative top margin),
           so the thread's title sits in the bar's caption area. */}
       <View style={{ flex: 1, alignSelf: "stretch", marginTop: titleBarShown() ? -titleBar().height : 0 }}>
@@ -2502,7 +2530,7 @@ export function Forum(props: {
                 // would reopen the boards — 正文→列表→双栏→正文, an endless loop. With the rail
                 // folded, open the boards; once open the home is already fully shown, so bounce.
                 if (paneShown() === "boards") {
-                  if (channelsCollapsed()) toggleChannelsCollapsed();
+                  applyFoldSwipe(dx, vx);
                   settle();
                   return;
                 }
@@ -2510,7 +2538,10 @@ export function Forum(props: {
                 // Closing the last pane is left to the dim, the Back key and the list's back button.
                 paneBack();
               } else if (left) {
-                // Left swipes never close the pane; they just put it back.
+                // Left swipes never close the pane. The boards home is the one rung with both
+                // columns on screen, so there a left swipe folds them (the mirror of the right
+                // swipe that opens them); the list alone has nothing to fold.
+                if (paneShown() === "boards") applyFoldSwipe(dx, vx);
                 void settle(); return;
               }
               settle();

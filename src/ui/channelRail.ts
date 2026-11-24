@@ -28,3 +28,24 @@ export function toggleChannelsCollapsed(): void {
 export function channelsRailed(windowWidth: number, folded: boolean): boolean {
   return folded || windowWidth < RAIL_BELOW;
 }
+
+/** How far (dp) a swipe must travel, or how fast (dp/s) it must be, to count as
+ * meant: below this a drag is a scroll that started sideways. */
+const SWIPE_DISTANCE = 60;
+const SWIPE_VELOCITY = 700;
+
+/**
+ * What a horizontal swipe over the home's columns asks for: a right swipe opens
+ * the folded column and a left one folds it again, the two being the mirror of
+ * each other.
+ *
+ * A window narrower than {@link RAIL_BELOW} has one state only (the rail, folded
+ * or not), so a swipe there asks for nothing: it must not leave a fold saved
+ * that nothing on screen shows.
+ */
+export function foldSwipeIntent(dx: number, vx: number, windowWidth: number): "open" | "fold" | null {
+  if (windowWidth < RAIL_BELOW) return null;
+  if (dx > SWIPE_DISTANCE || vx > SWIPE_VELOCITY) return "open";
+  if (dx < -SWIPE_DISTANCE || vx < -SWIPE_VELOCITY) return "fold";
+  return null;
+}
