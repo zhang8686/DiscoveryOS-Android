@@ -29,9 +29,11 @@ export function ThreadRow(props: {
   /** A long press (to hide the thread from the list). */
   onLongPress?: () => void;
 }) {
-  // Read the row once: the getter is called a dozen times below (height, tint, title, counts),
-  // and each call is a signal read on a row that scrolls.
-  const p = props.item();
+  // A cell of the list is reused for another thread as the user scrolls, and this body runs only
+  // once: a value captured here would keep the first thread it was given (its title, excerpt and
+  // counts) while the press and the face move on to the next. So `p` stays a function, read at
+  // each binding, which is what makes a recycled row show the thread it now holds.
+  const p = () => props.item();
   return (
     <View
       onPress={props.onPress}
@@ -40,9 +42,9 @@ export function ThreadRow(props: {
         paddingVertical: 6,
         paddingHorizontal: 8,
         borderRadius: 6,
-        height: p.excerpt !== undefined ? undefined : 64,
+        height: p().excerpt !== undefined ? undefined : 64,
         backgroundColor: props.selected() ? palette().selected : palette().surface,
-        opacity: p.pinned ? 0.5 : (props.viewed() && !props.selected() ? 0.62 : 1),
+        opacity: p().pinned ? 0.5 : (props.viewed() && !props.selected() ? 0.62 : 1),
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
@@ -51,47 +53,47 @@ export function ThreadRow(props: {
       <Avatar size={avatarSide()} radius={7} url={props.avatar()} />
       <View style={{ flex: 1, gap: 2 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-          <Text style={{ numberOfLines: 2, fontSize: displaySettings().list, color: p.color ?? (props.viewed() ? palette().muted : palette().text), fontWeight: props.viewed() ? 400 : 600, flexShrink: 1 }}>
+          <Text style={{ numberOfLines: 2, fontSize: displaySettings().list, color: p().color ?? (props.viewed() ? palette().muted : palette().text), fontWeight: props.viewed() ? 400 : 600, flexShrink: 1 }}>
             {props.favorite() ? <Text style={{ fontSize: 11, color: palette().muted }}>{"★ "}</Text> : null}
-            {p.title}
+            {p().title}
           </Text>
-          {p.agreed ? <LineIcon name="thumb" size={12} /> : null}
+          {p().agreed ? <LineIcon name="thumb" size={12} /> : null}
         </View>
         {}
-        {p.excerpt !== undefined ? (
-          p.excerpt ? <Text style={{ fontSize: 12, color: palette().muted }}>{p.excerpt}</Text> : null
+        {p().excerpt !== undefined ? (
+          p().excerpt ? <Text style={{ fontSize: 12, color: palette().muted }}>{p().excerpt}</Text> : null
         ) : (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4, minWidth: 0 }}>
             <Text style={{ fontSize: 11, color: palette().muted, flexShrink: 1, numberOfLines: 1 }}>
-              {meta(p, props.sortByDate?.() ?? false)}
+              {meta(p(), props.sortByDate?.() ?? false)}
             </Text>
             {}
-            {p.hasImages ? <LineIcon name="image" size={12} /> : null}
+            {p().hasImages ? <LineIcon name="image" size={12} /> : null}
           </View>
         )}
       </View>
-      {p.excerpt !== undefined ? (
+      {p().excerpt !== undefined ? (
         <View style={{ width: 0, alignItems: "flex-end" }}>
-          <Text style={{ fontSize: 11, color: palette().muted }}>{timeAgo((p.lastReplyAt ?? p.at) ?? "")}</Text>
+          <Text style={{ fontSize: 11, color: palette().muted }}>{timeAgo((p().lastReplyAt ?? p().at) ?? "")}</Text>
         </View>
       ) : null}
-      {(p.replies === undefined && p.views === undefined) ? null : (
+      {(p().replies === undefined && p().views === undefined) ? null : (
         <View style={{ width: 52, alignItems: "flex-end", gap: 1 }}>
-          {p.views !== undefined ? (
+          {p().views !== undefined ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-              <Text style={{ fontSize: 11, color: palette().muted }}>{String(p.views)}</Text>
+              <Text style={{ fontSize: 11, color: palette().muted }}>{String(p().views)}</Text>
               <LineIcon name="eye" size={11} color={palette().muted} />
             </View>
           ) : null}
-          {p.replies !== undefined ? (
+          {p().replies !== undefined ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-              <Text style={{ fontSize: 11, color: palette().muted }}>{String(p.replies)}</Text>
+              <Text style={{ fontSize: 11, color: palette().muted }}>{String(p().replies)}</Text>
               <LineIcon name="bubble" size={11} color={palette().muted} />
             </View>
           ) : null}
-          {p.replies !== undefined && newRepliesSinceView(p.id, p.replies) > 0 ? (
+          {p().replies !== undefined && newRepliesSinceView(p().id, p().replies) > 0 ? (
             <Text style={{ fontSize: 10, fontWeight: 600, color: palette().link }}>
-              {`+${newRepliesSinceView(p.id, p.replies)}`}
+              {`+${newRepliesSinceView(p().id, p().replies)}`}
             </Text>
           ) : null}
         </View>
