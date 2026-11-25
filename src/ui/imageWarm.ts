@@ -64,24 +64,6 @@ export function warmImages(urls: string[], limit = 8): void {
   if (queue.length > 0) pump();
 }
 
-/**
- * Warms `urls` ahead of whatever is queued: the pictures the reader is about to step to (the
- * viewer's neighbours), which would otherwise wait behind a page's worth of body pictures that
- * were asked for first. Order within `urls` is kept; already-asked addresses are skipped.
- */
-export function warmImagesFirst(urls: string[], limit = 3): void {
-  const fresh: string[] = [];
-  for (const url of urls) {
-    if (fresh.length >= limit) break;
-    if (!url || asked.has(url)) continue;
-    asked.add(url);
-    fresh.push(url);
-  }
-  if (fresh.length === 0) return;
-  queue.unshift(...fresh);
-  pump();
-}
-
 /** Forgets what was warmed (a sign-out drops the session the pictures were fetched with). */
 export function clearWarmedImages(): void {
   asked.clear();
@@ -113,10 +95,7 @@ export function warmedCount(): number {
 const faceAsked = new Set<string>();
 const faceQueue: string[] = [];
 let faceActive = 0;
-/** Four at once: the runtime downloads on four threads (`Images.POOL`), and a face is a few
- *  kilobytes — matching that count drains a screenful of faces before the body's pictures,
- *  which are the ones that actually wait on bandwidth. */
-const FACE_CONCURRENCY = 4;
+const FACE_CONCURRENCY = 3;
 
 function pumpFaces(): void {
   while (faceActive < FACE_CONCURRENCY && faceQueue.length > 0) {

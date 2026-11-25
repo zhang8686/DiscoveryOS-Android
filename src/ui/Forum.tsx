@@ -102,7 +102,7 @@ type HistoryRow = ListRow;
 // (favorites, notices, search) need a profile lookup. Warm the first screen eagerly, then resolve
 // the rest as rows come into view: a 300-row list used to queue 300 profile requests on open,
 // all competing with the first page's HTML and pictures for the connection.
-const AVATAR_EAGER_ROWS = 24;
+const AVATAR_EAGER_ROWS = 20;
 function warmAvatarNames(ps: Post[]): void {
   untracked(() => {
     const faces: string[] = [];
@@ -128,7 +128,7 @@ function onRowsViewable(info: { viewableItems: { item: ListRow }[] }): void {
       // the tap open at once instead of waiting on the network (see `warmThreadPage`).
       warmThreadPage(v.item.post.id);
     }
-    warmAvatars(faces, 12);
+    warmAvatars(faces, 8);
   });
 }
 

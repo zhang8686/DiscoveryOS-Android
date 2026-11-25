@@ -6,7 +6,7 @@ import { pixelSize } from "./pixelSize";
 import { notify } from "./toast";
 import { openLink } from "./links";
 import { imageDataUrl, scanPage } from "./qrScanner";
-import { warmImagesFirst } from "./imageWarm";
+import { warmImages } from "./imageWarm";
 
 export type Shown = {
   /** The original file, which Save writes and the viewer looks the picture up by. */
@@ -304,8 +304,7 @@ export function ImageViewer() {
     const g = viewerState();
     if (!g || g.items.length < 2) return;
     const near = [g.index - 1, g.index + 1, g.index + 2].filter((i) => i >= 0 && i < g.items.length);
-    // Ahead of the rest: these are the pictures the reader steps to next.
-    warmImagesFirst(near.map((i) => g.items[i].display), 3);
+    warmImages(near.map((i) => g.items[i].display), 3);
   });
   const gallery = () => viewerState();
   const current = () => gallery()?.items[gallery()!.index];
