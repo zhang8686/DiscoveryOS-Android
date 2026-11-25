@@ -2,7 +2,7 @@
   "name": "DiscoveryOSX",
   "id": "com.Android.DiscoveryOSX",
   "version": "1.2.2-3",
-  "build": 84,
+  "build": 85,
   "icon": "icon.png",
   "android": {
     "targetSdk": 35

@@ -337,18 +337,9 @@ export function Thread(props: {
    *  page arrives, so a picture the reader is now looking at is never behind one they scrolled
    *  past. Downloading is not interrupted (the runtime's pool finishes those), only the waiting. */
   function warmPageImages(list: Reply[]): void {
-    const urls: string[] = [];
-    for (const r of list) {
-      for (const m of bodyHtml(r).matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
-        if (m[1]) urls.push(m[1]);
-        if (urls.length >= 12) break;
-      }
-      if (urls.length >= 12) break;
-    }
-    clearWarmedImages();
-    warmImages(urls, 12);
-    // The floors' faces, warmed apart from the body's pictures: a floor draws its avatar as it
-    // lays itself out. The page carries the face's address; a row without one builds it by uid.
+    // The floors' faces first: a face is drawn the moment its floor lays itself out, and it is
+    // small. Asking for the body's pictures before them put a screenful of faces behind a dozen
+    // large downloads on the runtime's four threads — the "avatars trickle in" of a fresh page.
     const faces: string[] = [];
     for (const r of list) {
       const face = r.author.avatar ? absoluteUrl(r.author.avatar, HOST) : avatarUrlForUid(r.author.id);
@@ -356,6 +347,16 @@ export function Thread(props: {
       if (faces.length >= 12) break;
     }
     warmAvatars(faces, 12);
+    const urls: string[] = [];
+    for (const r of list) {
+      for (const m of bodyHtml(r).matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
+        if (m[1]) urls.push(m[1]);
+        if (urls.length >= 16) break;
+      }
+      if (urls.length >= 16) break;
+    }
+    clearWarmedImages();
+    warmImages(urls, 16);
   }
 
   // The pictures a reply shows (block images carry the original in `title`), so a

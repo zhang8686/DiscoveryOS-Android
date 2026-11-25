@@ -30,15 +30,18 @@ export function Avatar(props: {
         backgroundColor: palette().border,
       }}
     >
-      <PixelDino size={Math.round(props.size * 0.9)} />
+      {/* The dinosaur is the placeholder, not a layer: once the face is there it is neither drawn
+          behind it nor faded away, which is one less canvas repaint per row while a list scrolls. */}
       {showsPicture() ? (
         <Image
           src={props.url!}
-          fadeDuration={120}
+          fadeDuration={0}
           onError={() => failedFor.set(props.url)}
           style={{ position: "absolute", left: 0, top: 0, width: props.size, height: props.size, objectFit: "cover" }}
         />
-      ) : null}
+      ) : (
+        <PixelDino size={Math.round(props.size * 0.9)} />
+      )}
     </View>
   );
 }
