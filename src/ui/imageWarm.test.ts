@@ -1,5 +1,5 @@
 import { expect, test } from "nsh/test";
-import { clearWarmedImages, setImageLoader, warmImages, warmPending, warmedCount } from "./imageWarm";
+import { clearWarmedAvatars, clearWarmedImages, setImageLoader, warmAvatars, warmAvatarsPending, warmImages, warmPending, warmedCount } from "./imageWarm";
 
 /** A loader that records what it was asked for and answers on the next tick. */
 function recorder() {
@@ -47,7 +47,38 @@ test("blank addresses are skipped and a failed picture does not stop the queue",
   setImageLoader(null);
 });
 
-/** Lets the loader promises and the queue settle. */
+/** Lets the loader promises and the queues settle. */
 async function waitIdle(): Promise<void> {
-  for (let i = 0; i < 50 && warmPending() > 0; i++) await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  for (let i = 0; i < 50 && (warmPending() > 0 || warmAvatarsPending() > 0); i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
 }
+
+test("faces are warmed once each, alongside a page's pictures", async () => {
+  clearWarmedImages();
+  clearWarmedAvatars();
+  const seen = recorder();
+  warmImages(["post-1.jpg"], 8);
+  warmAvatars(["face-a.jpg", "face-b.jpg", "face-a.jpg"]);
+  await waitIdle();
+  expect(seen.sort()).toEqual(["face-a.jpg", "face-b.jpg", "post-1.jpg"]);
+  expect(warmAvatarsPending()).toBe(0);
+});
+
+test("a thread's own warm-up does not drop the faces a list asked for", async () => {
+  clearWarmedImages();
+  clearWarmedAvatars();
+  const seen = recorder();
+  warmAvatars(["face-a.jpg"]);
+  await waitIdle();
+  // Entering a thread clears the pictures' queue, not the faces' answers.
+  clearWarmedImages();
+  warmAvatars(["face-a.jpg"]);
+  await waitIdle();
+  expect(seen).toEqual(["face-a.jpg"]);
+  // A sign-out drops them, so the next member's list asks again.
+  clearWarmedAvatars();
+  warmAvatars(["face-a.jpg"]);
+  await waitIdle();
+  expect(seen).toEqual(["face-a.jpg", "face-a.jpg"]);
+});

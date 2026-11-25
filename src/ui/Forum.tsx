@@ -14,7 +14,7 @@ import { BUILTIN_CHANNELS, mergeChannels } from "../discuz/channels";
 import { Thread } from "./Thread";
 import { NewThread } from "./NewThread";
 import { Conversation } from "./Conversation";
-import { bodyPicturePx, clearWarmedImages, warmImages } from "./imageWarm";
+import { bodyPicturePx, clearWarmedAvatars, clearWarmedImages, warmAvatars, warmImages } from "./imageWarm";
 import { clearAttachedPictures } from "./attachPictures";
 import { LoadingBar } from "./LoadingBar";
 import { channelIcon } from "./channelIcon";
@@ -53,7 +53,7 @@ function avatarSignal(name: string): ReturnType<typeof signal<string>> {
 const avatarPending = new Set<string>();
 const avatarQueue: string[] = [];
 let avatarActive = 0;
-const AVATAR_CONCURRENCY = 3;
+const AVATAR_CONCURRENCY = 4;
 function resolveAvatarByName(name: string | undefined): void {
   if (!name || avatarPending.has(name) || avatarSignal(name)() !== "") return;
   avatarPending.add(name);
@@ -65,7 +65,12 @@ function pumpAvatars(): void {
     const name = avatarQueue.shift()!;
     avatarActive++;
     userAvatar(name)
-      .then((url) => avatarSignal(name).set(url ?? ""))
+      .then((url) => {
+        avatarSignal(name).set(url ?? "");
+        // The lookup ends where the row begins: fetch the face itself now, so the row that draws
+        // it finds the bytes in the cache instead of starting a second round trip.
+        if (url) warmAvatars([url], 1);
+      })
       .catch(() => avatarSignal(name).set(""))
       .finally(() => { avatarPending.delete(name); avatarActive--; pumpAvatars(); });
   }
@@ -100,18 +105,30 @@ type HistoryRow = ListRow;
 const AVATAR_EAGER_ROWS = 20;
 function warmAvatarNames(ps: Post[]): void {
   untracked(() => {
-    for (const p of ps) if (!p.uid) resolveAvatarByName(avatarName(p));
+    const faces: string[] = [];
+    for (const p of ps) {
+      // A row with a uid needs no lookup — its face address is already known, so it is fetched
+      // now (a screenful at most), before the row that draws it exists.
+      const byUid = avatarUrlForUid(p.uid);
+      if (byUid) faces.push(byUid);
+      else resolveAvatarByName(avatarName(p));
+    }
+    warmAvatars(faces, AVATAR_EAGER_ROWS);
   });
 }
 function onRowsViewable(info: { viewableItems: { item: ListRow }[] }): void {
   untracked(() => {
+    const faces: string[] = [];
     for (const v of info.viewableItems) {
       if (v.item.kind !== "post") continue;
-      if (!v.item.post.uid) resolveAvatarByName(avatarName(v.item.post));
+      const byUid = avatarUrlForUid(v.item.post.uid);
+      if (byUid) faces.push(byUid);
+      else resolveAvatarByName(avatarName(v.item.post));
       // The row is on screen, so it is a tap away: fetching its first reply page now is what makes
       // the tap open at once instead of waiting on the network (see `warmThreadPage`).
       warmThreadPage(v.item.post.id);
     }
+    warmAvatars(faces, 8);
   });
 }
 
@@ -1623,6 +1640,7 @@ export function Forum(props: {
       clearResolvedAvatars();
       clearAttachedPictures();
       clearWarmedImages();
+      clearWarmedAvatars();
       resetThreadWarm();
       if (!signedIn) {
         listRequest++;

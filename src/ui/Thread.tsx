@@ -5,6 +5,7 @@ import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, Reply
 import { bookmarkPost, clearThreadReplyPages, loadFloorPage, loadReplyPage, removeBookmark } from "../discuz/forum";
 import { absolutize, absoluteUrl, attachmentLinks, fixDiscuzMarkup, fixImages, floorFromLink, htmlToText, isAttachmentUrl, linkifyBareUrls, mergePage, showAttachedPictures, threadIdFromLink, trimLeadingBlanks, type Post, type Reply } from "../discuz/parse";
 import { attachmentIsPicture } from "../discuz/attachments";
+import { avatarUrlForUid } from "../discuz/avatarUrl";
 import { draftToPost, postToDraft, replyQuoteInDraft, splitDraftQuote } from "../discuz/quote";
 import { replyToChip, replyToHeader, replyToNotice, type ReplyTarget } from "../discuz/replyTo";
 import { downloadAttachment } from "./downloads";
@@ -21,7 +22,7 @@ import { titleBarShown } from "./TitleBar";
 import { BrowserIcon, BubbleIcon, EnvelopeIcon, LinkIcon, PencilIcon, QuoteIcon, StarIcon, TrashIcon } from "./icons";
 import { ReplyCard } from "./ReplyCard";
 import { ReplyBox } from "./ReplyBox";
-import { bodyPicturePx, clearWarmedImages, warmImages } from "./imageWarm";
+import { bodyPicturePx, clearWarmedImages, warmAvatars, warmImages } from "./imageWarm";
 import { ThreadSkeleton } from "./Skeleton";
 import { attachmentTag, createAttachments } from "./attachments";
 import type { Attached } from "./ReplyBox";
@@ -346,6 +347,15 @@ export function Thread(props: {
     }
     clearWarmedImages();
     warmImages(urls, 12);
+    // The floors' faces, warmed apart from the body's pictures: a floor draws its avatar as it
+    // lays itself out. The page carries the face's address; a row without one builds it by uid.
+    const faces: string[] = [];
+    for (const r of list) {
+      const face = r.author.avatar ? absoluteUrl(r.author.avatar, HOST) : avatarUrlForUid(r.author.id);
+      if (face) faces.push(face);
+      if (faces.length >= 12) break;
+    }
+    warmAvatars(faces, 12);
   }
 
   // The pictures a reply shows (block images carry the original in `title`), so a

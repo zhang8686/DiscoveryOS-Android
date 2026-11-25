@@ -53,12 +53,18 @@ export function PixelDino(props: { size?: number }) {
       style={{ width: size, height: size }}
       draw={(cx) => {
         const body = colorScheme() === "dark" ? "#d8dee6" : "#3a3f45";
+        // Neighbouring cells of a row are one rectangle: a face is drawn for every row of a list,
+        // and one fill per run (about a third of one per cell) is what keeps a scroll smooth.
+        cx.fillStyle = body;
         for (let y = 0; y < DINO.length; y++) {
           const row = DINO[y];
-          for (let x = 0; x < row.length; x++) {
-            if (row[x] !== "#") continue;
-            cx.fillStyle = body;
-            cx.fillRect(x * px, y * px, px, px);
+          let x = 0;
+          while (x < row.length) {
+            if (row[x] !== "#") { x++; continue; }
+            let end = x + 1;
+            while (end < row.length && row[end] === "#") end++;
+            cx.fillRect(x * px, y * px, (end - x) * px, px);
+            x = end;
           }
         }
       }}

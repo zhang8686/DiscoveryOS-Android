@@ -80,6 +80,61 @@ export function warmedCount(): number {
   return asked.size;
 }
 
+/**
+ * Faces, warmed apart from the body's pictures.
+ *
+ * An avatar is drawn the moment its row comes into view: without bytes already in the cache the
+ * row shows the grey square, then the face fades in a round trip later — the "avatars appear one by
+ * one" a long list was known for. The address of a row's face is known before it is drawn (a uid
+ * builds it, a name resolves to it), so it can be fetched ahead of the row.
+ *
+ * A queue of its own, so a page of faces never sits behind a page of post pictures and a body's
+ * warm-up (which clears its own queue on entry) does not drop them. Faces are small and few:
+ * a couple in flight is enough, and the runtime's own `Image` cache answers a row that asks again.
+ */
+const faceAsked = new Set<string>();
+const faceQueue: string[] = [];
+let faceActive = 0;
+const FACE_CONCURRENCY = 3;
+
+function pumpFaces(): void {
+  while (faceActive < FACE_CONCURRENCY && faceQueue.length > 0) {
+    const url = faceQueue.shift();
+    if (!url) break;
+    faceActive++;
+    loader(url)
+      .catch(() => undefined)
+      .finally(() => {
+        faceActive--;
+        pumpFaces();
+      });
+  }
+}
+
+/** Warms the faces `urls` (in row order), at most `limit` of them. Never throws. */
+export function warmAvatars(urls: (string | undefined)[], limit = 12): void {
+  let n = 0;
+  for (const url of urls) {
+    if (n >= limit) break;
+    if (!url || faceAsked.has(url)) continue;
+    faceAsked.add(url);
+    faceQueue.push(url);
+    n++;
+  }
+  if (faceQueue.length > 0) pumpFaces();
+}
+
+/** How many faces are queued or loading (tests, and the sign-out reset below). */
+export function warmAvatarsPending(): number {
+  return faceQueue.length + faceActive;
+}
+
+/** Drops the warmed faces (a sign-out, when another member's list follows). */
+export function clearWarmedAvatars(): void {
+  faceAsked.clear();
+  faceQueue.length = 0;
+}
+
 /** Runs the queue through `fn` instead of loading pictures (`null` puts `Image.prefetch` back). */
 export function setImageLoader(fn: Loader | null): void {
   loader = fn ?? defaultLoader;

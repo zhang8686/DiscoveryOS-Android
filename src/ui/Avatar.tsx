@@ -12,8 +12,10 @@ export function Avatar(props: {
   onPress?: () => void;
   accessibilityLabel?: string;
 }) {
-  const failed = signal(false);
-  const showsPicture = () => !!props.url && props.url.length > 0 && !failed();
+  // The address that failed, not a plain boolean: a row recycled onto another member asks for a
+  // different face, and that one must be tried (a boolean would keep the dinosaur for good).
+  const failedFor = signal<string | undefined>(undefined);
+  const showsPicture = () => !!props.url && props.url.length > 0 && failedFor() !== props.url;
   return (
     <View
       onPress={props.onPress}
@@ -28,15 +30,13 @@ export function Avatar(props: {
         backgroundColor: palette().border,
       }}
     >
-      {
-}
       <PixelDino size={Math.round(props.size * 0.9)} />
       {showsPicture() ? (
         <Image
           src={props.url!}
           fadeDuration={120}
-          onError={() => failed.set(true)}
-          style={{ position: "absolute", left: 0, top: 0, width: props.size, height: props.size }}
+          onError={() => failedFor.set(props.url)}
+          style={{ position: "absolute", left: 0, top: 0, width: props.size, height: props.size, objectFit: "cover" }}
         />
       ) : null}
     </View>
