@@ -5,12 +5,11 @@ import { hideThread, isHidden } from "./hiddenThreads";
 import { onEscape } from "./escape";
 import { ShortcutsHelp } from "./ShortcutsHelp";
 import { shortcutRows, useCommand } from "./commands";
-import { DEMO, clearReplyPageCache, loadBookmarks, loadChannels, loadMyReplies, loadMyThreads, loadPmUsers, loadPosts, loadReplyPage, searchThreads, loadNotices} from "../discuz/forum";
+import { DEMO, clearReplyPageCache, loadBookmarks, loadChannels, loadMyReplies, loadMyThreads, loadPmUsers, loadPosts, loadReplyPage, searchMore, searchThreads, loadNotices} from "../discuz/forum";
 import { avatarUrlForUid } from "../discuz/avatarUrl";
 import { clearResolvedAvatars, userAvatar } from "../discuz/avatarCache";
 import { loadNoticeCounts, markNoticesRead } from "../discuz/notifications";
-import { cleanChannelTitle, mergePage, parseChannels, type Channel, type Post, type Reply, absolutize, fixDiscuzMarkup, fixImages, HOST_BASE } from "../discuz/parse";
-import { BUILTIN_CHANNELS, mergeChannels } from "../discuz/channels";
+import { cleanChannelTitle, mergePage, type Channel, type Post, type Reply, absolutize, fixDiscuzMarkup, fixImages, HOST_BASE } from "../discuz/parse";
 import { Thread } from "./Thread";
 import { NewThread } from "./NewThread";
 import { Conversation } from "./Conversation";
@@ -18,7 +17,7 @@ import { bodyPicturePx, clearWarmedAvatars, clearWarmedImages, warmAvatars, warm
 import { clearAttachedPictures } from "./attachPictures";
 import { LoadingBar } from "./LoadingBar";
 import { channelIcon } from "./channelIcon";
-import { PencilIcon, RefreshIcon, SidebarIcon } from "./icons";
+import { RefreshIcon, SidebarIcon } from "./icons";
 import { LineIcon, type IconName } from "./lineIcons";
 import { hint } from "./Hint";
 import { palette } from "./appearance";
@@ -349,6 +348,27 @@ let heldRows: { key: string; items: Post[]; more: boolean; page: number } | null
  * keeps the three columns in the row. */
 const wantsPanes = () => windowSize().height > windowSize().width;
 const searchKey = (term: string) => `search:${term}`;
+/** Each search's address for its next page, until it runs out: the site keeps a result set under
+ *  a `searchid` that only the pager links carry, so the href is kept as it came. */
+const searchNextPage = new Map<string, string>();
+/** How many searches' next-page addresses are kept. A search that runs out is removed at once; the
+ *  rest are dropped oldest-first past this, so a session of many searches does not keep every
+ *  result set's address for the app's life. */
+const SEARCH_NEXT_KEEP = 8;
+function rememberSearchNext(key: string, href: string | null | undefined): void {
+  if (!href) {
+    searchNextPage.delete(key);
+    return;
+  }
+  // Re-insert so the search in use is the newest: eviction takes from the front.
+  searchNextPage.delete(key);
+  searchNextPage.set(key, href);
+  while (searchNextPage.size > SEARCH_NEXT_KEEP) {
+    const oldest = searchNextPage.keys().next();
+    if (oldest.done) break;
+    searchNextPage.delete(oldest.value);
+  }
+}
 
 /** One channel in the list: its icon and title with its new-post count, or in the rail its
  * icon with the count as a badge. Hovering and being selected fade a tint in and out. */
@@ -451,10 +471,10 @@ export function Forum(props: {
   onActions?: (api: { openNotices: () => void; openMessages: () => void }) => void;
   /** Where the forum reports its unread notice count, for the avatar's red dot. */
   noticesUnread?: { set(value: number): void };
+  /** The same for private messages, so the account card's 短消息 button carries a dot too. */
+  messagesUnread?: { set(value: number): void };
 }) {
   const channels = signal<Channel[] | null>(cachedChannels());
-  // Portrait: the board column folds away so the list takes the whole pane (a « in its header).
-  const boardsCollapsed = signal(false);
   // The cached list may finish loading after this component is built.
   effect(() => {
     const cached = cachedChannels();
@@ -520,6 +540,7 @@ export function Forum(props: {
   // 提醒 has no row of its own in the column any more; its count goes up to the app, which puts
   // a red dot on the account avatar.
   effect(() => { props.noticesUnread?.set(noticeUnread()); });
+  effect(() => { props.messagesUnread?.set(pmUnread()); });
   // 提醒 and 短消息 are two different pages (notice.php / pm.php). They share the
   // list column and its cache, but never its view state: `messages()` means the
   // conversation list, `noticesOpen()` means notice.php. Keeping them separate is
@@ -777,7 +798,6 @@ export function Forum(props: {
   }
   // Portrait (height > width): the post-list column collapses to a rail while a thread is open,
   // mirroring how the board column folds on a narrow window. The detail then owns the width.
-  const isPortrait = () => windowSize().height > windowSize().width;
   panesNow = wantsPanes();
   const threadListPopoverOpen = signal(false);
   const threadListAnchor = signal<ViewRef | null>(null);
@@ -998,7 +1018,8 @@ export function Forum(props: {
         // The phone app's clean merge: page 1 replaces the rows, a later page appends them.
         const merged = n === 1 ? { items: list, more: list.length > 0 } : mergePage(posts(), list);
         if (n === 1) {
-          more.set(merged.more);
+          // A search whose page printed no pager is complete: its rows must not invite a second.
+          more.set(merged.more && (!key.startsWith("search:") || searchNextPage.has(key)));
           // A new list legitimately starts at its top: do not defend the old reading position.
           lastReadingY = 0;
           holdY = 0;
@@ -1039,7 +1060,7 @@ export function Forum(props: {
         // are the ones the reader is looking at (see `onRowsViewable`), not the list's first three.
         if (n === 1) resetThreadWarm();
       })
-      .catch((e) => {
+      .catch(() => {
         if (request !== listRequest) return;
         if (n === 1) {
           notify("list", "帖子加载失败，点此重试。", () => {
@@ -1060,13 +1081,17 @@ export function Forum(props: {
         }
       })
       .finally(() => {
-        listLoading.set(false);
-        if (n === 1 && request === listRequest) markSlowList(false);
         if (n === 1) {
-          // An overtaken page-1 load must not stop the spinner owned by the newer one.
-          if (request === listRequest) { refreshing.set(false); pullRefreshing.set(false); }
+          // An overtaken page-1 load must not settle the newer one's state: the skeleton, the
+          // slow hint and the two spinners all belong to the request that still owns the list.
+          if (request !== listRequest) return;
+          listLoading.set(false);
+          markSlowList(false);
+          refreshing.set(false);
+          pullRefreshing.set(false);
           return;
         }
+        listLoading.set(false);
         // Always release the paging lock owned by this request — even when a page-1 refresh
         // overtook it and `listRequest` has since changed. The old guard returned early here,
         // leaving `loadingMore` true forever: every later loadMore() became a no-op, so the
@@ -1082,8 +1107,9 @@ export function Forum(props: {
     // A page fetched while the list was moving is waiting to be inserted: insert it instead of
     // asking for the next one, which would skip a page and leave a gap in the rows.
     if (flushHeldRows()) return;
-    // Search results and 提醒 are one page: there is no next page to fetch.
-    if (searchTerm() !== null || noticesOpen()) return;
+    // 提醒 is a single page. A search pages on: the site's own pager links carry the `searchid`
+    // its result set lives under, so each next page is fetched by the address the last one gave.
+    if (noticesOpen()) return;
     // Once the end shows Retry, scrolling does not fetch again: the button does.
     // The single `loadingMore` lock covers the early (onScrollEnd) request and the
     // end-of-list (onLoadMore) request, so a page is never fetched twice.
@@ -1095,6 +1121,18 @@ export function Forum(props: {
       if (!quiet) loadingMoreShown.set(true);
       return pagingToken;
     };
+    // A term with no pager link left has nothing more to show.
+    if (searchTerm() !== null) {
+      const key = searchKey(searchTerm()!);
+      const href = searchNextPage.get(key);
+      if (!href) return;
+      const token = begin();
+      fetchList(() => searchMore(href).then((r) => {
+        rememberSearchNext(key, r.next);
+        return r.posts;
+      }), page() + 1, key, token);
+      return;
+    }
     // Favorites page the same way as a channel: the next page of the favorites.
     if (favorites()) {
       fetchList((p) => loadBookmarks(p), page() + 1, FAVORITES_KEY, begin());
@@ -1346,7 +1384,12 @@ export function Forum(props: {
     searchTerm.set(t);
     searchOpen.set(true);
     searchDraft.set(t);
-    openList(searchKey(t), () => searchThreads(t));
+    const key = searchKey(t);
+    openList(key, () =>
+      searchThreads(t).then((r) => {
+        rememberSearchNext(key, r.next);
+        return r.posts;
+      }));
   }
 
   // Closes the search field. With results showing, the channel or favorites they replaced
@@ -1564,7 +1607,7 @@ export function Forum(props: {
           setTimeout(() => { const first = posts()[0]; if (first) openThread(first); }, 350);
         }
       })
-      .catch((e) => {
+      .catch(() => {
         if (request !== channelsRequest || quiet) return;
         // Signed out, a failed channel list is not an error to report: the sign-in dialog is what is needed.
         if (!props.user()) {
@@ -1613,7 +1656,15 @@ export function Forum(props: {
     // blink through an empty frame (the old path also cleared the thread and re-ran the layout
     // animation, which read as a flash while scrolling).
     const term = searchTerm();
-    if (term !== null) { fetchList(() => searchThreads(term), 1, searchKey(term)); return; }
+    if (term !== null) {
+      const key = searchKey(term);
+      fetchList(() => searchThreads(term).then((r) => {
+        if (r.next) searchNextPage.set(key, r.next);
+        else searchNextPage.delete(key);
+        return r.posts;
+      }), 1, key);
+      return;
+    }
     if (favorites()) { fetchList((p) => loadBookmarks(p), 1, FAVORITES_KEY); return; }
     if (mine()) { fetchList((p) => loadMyThreads(p), 1, MY_THREADS_KEY); return; }
     if (replies()) { fetchList((p) => loadMyReplies(p), 1, MY_REPLIES_KEY); return; }
@@ -1687,6 +1738,11 @@ export function Forum(props: {
       }
       wasSignedIn.set(signedIn);
     });
+  });
+  // The unread poll belongs to this screen: an interval that outlived it would keep asking the
+  // forum and writing the badge signals with nothing on screen to read them.
+  cleanup(() => {
+    if (notifyTimer !== undefined) { clearInterval(notifyTimer); notifyTimer = undefined; }
   });
 
   /** 提醒：notice.php 的列。它和短消息共用列表栏，但 `messages()` 必须为 false，

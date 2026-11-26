@@ -74,22 +74,6 @@ export function settleBack(pan: AnimatedValue): Promise<{ finished: boolean }> {
 }
 
 /**
- * M3 backward navigation with no drag behind it (a Back control or a dimmed backdrop): slide
- * toward the right, the same edge the page entered from, so the motion stays on one side and
- * never reverses. Standard accelerate, so it leaves quickly.
- */
-export async function slideOut(motion: Motion): Promise<void> {
-  if (reduceMotion()) {
-    await motion.play({ keyframes: { opacity: [1, 0] }, duration: M3.duration.exit });
-    return;
-  }
-  await motion.play({
-    keyframes: { translateX: [0, DISTANCE], opacity: [1, 0] },
-    duration: M3.duration.exit, easing: M3.easing.standardAccelerate,
-  });
-}
-
-/**
  * M3 lateral transition: peer destinations in the same set (the list column switching boards)
  * slide in together on one axis WITHOUT a fade or parallax. Standard easing, begin and end on
  * screen. This replaces the former one-off fade+slide used for the board list.
@@ -98,19 +82,6 @@ export async function lateralSlide(motion: Motion): Promise<void> {
   if (reduceMotion()) { motion.reset(); return; }
   await motion.play({
     keyframes: { translateX: [DISTANCE, 0] },
-    duration: M3.duration.onScreen, easing: M3.easing.standard,
-  });
-}
-
-/**
- * M3 fade through: a change between top-level destinations that have no spatial relationship.
- * The outgoing view has already been replaced in this declarative framework, so this plays the
- * incoming half — a clean fade with no slide and no persistent/shared element.
- */
-export async function fadeThrough(motion: Motion): Promise<void> {
-  if (reduceMotion()) { motion.reset(); return; }
-  await motion.play({
-    keyframes: { opacity: [0, 1] },
     duration: M3.duration.onScreen, easing: M3.easing.standard,
   });
 }

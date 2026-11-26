@@ -31,8 +31,13 @@ const asked = new Set<string>();
 const queue: string[] = [];
 /** How many warm-ups run at once: enough that a page of pictures arrives together, few enough
  *  that the pictures already on screen are not starved of the connection. The runtime's own
- *  download pool is the ceiling (`Images.POOL`), so this never asks for more than it can run. */
-const CONCURRENCY = 6;
+ *  download pool is the ceiling (`Images.POOL`), so this never asks for more than it can run.
+ *
+ *  Android draws and decodes pictures on one pool of four threads, downloads and decodes
+ *  together: a queue of warm-ups longer than the pool does not download faster, it only puts the
+ *  decode of the picture on screen behind the downloads of pictures further down the page. Three
+ *  leaves a thread for what the reader is actually looking at; the rest of the page follows. */
+const CONCURRENCY = 3;
 let active = 0;
 
 function pump(): void {
@@ -133,6 +138,14 @@ export function warmAvatarsPending(): number {
 export function clearWarmedAvatars(): void {
   faceAsked.clear();
   faceQueue.length = 0;
+}
+
+/** Warms the faces warmed last again (the image cache was just emptied, and the rows on screen
+ *  are the ones whose faces would otherwise fade in again one round trip at a time). */
+export function rewarmAvatars(limit = 12): void {
+  const urls = [...faceAsked].slice(-limit);
+  faceAsked.clear();
+  warmAvatars(urls, limit);
 }
 
 /** Runs the queue through `fn` instead of loading pictures (`null` puts `Image.prefetch` back). */

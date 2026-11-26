@@ -1,5 +1,4 @@
 import { Canvas, colorScheme } from "nsh";
-import { palette } from "./appearance";
 
 const DINO = [
   "........................................",

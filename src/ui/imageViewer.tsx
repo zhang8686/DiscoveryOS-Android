@@ -2,7 +2,6 @@ import { cleanup, createAnimatedValue, createMotion, effect, Image, reduceMotion
 import { mkdir, writeFile } from "fs/promises";
 import process from "process";
 import { fetchAttachment, safeFileName, splitFileName } from "../discuz/attachments";
-import { pixelSize } from "./pixelSize";
 import { notify } from "./toast";
 import { openLink } from "./links";
 import { imageDataUrl, scanPage } from "./qrScanner";
@@ -111,25 +110,63 @@ const LINKED_IMAGE = /<a\b[^>]*\bhref="([^"]+)"[^>]*>\s*<img\b[^>]*\bsrc="([^"]*
 const PLAIN_IMAGE = /<img\b[^>]*\bsrc="([^"]+)"[^>]*>/gi;
 
 /**
+ * One picture, however many addresses it is written under. The forum shows an attachment both as
+ * its download address (`attachment.php?aid=…`) and as a direct file, and a thumbnail of it differs
+ * from the original only by a suffix; comparing the strings alone kept those as separate entries,
+ * so the gallery held the same picture twice and a single step looked like it had not moved.
+ *
+ * An attachment's `aid` names it outright. For a direct file the name is used with its extension,
+ * cache-busting query and thumbnail suffix (`_thumb`, `-300x200`, `!small`) taken off.
+ */
+export function imageIdentity(url: string): string {
+  const withoutHash = url.split("#")[0];
+  const cut = withoutHash.indexOf("?");
+  const path = cut < 0 ? withoutHash : withoutHash.slice(0, cut);
+  const query = cut < 0 ? "" : withoutHash.slice(cut + 1);
+  const aid = /(?:^|&)aid=([^&]*)/.exec(query);
+  if (aid) {
+    let value = aid[1];
+    try { value = decodeURIComponent(value); } catch {  }
+    if (value) return `aid:${value.toLowerCase()}`;
+  }
+  const file = path.split("/").pop() ?? "";
+  let stem = file.replace(/\.[a-z0-9]{2,5}$/i, "");
+  try { stem = decodeURIComponent(stem); } catch {  }
+  stem = stem
+    .replace(/!small$/i, "")
+    .replace(/[-_.](?:thumb|thumbnail|small|preview|mini)$/i, "")
+    .replace(/[-_]\d{2,4}x\d{2,4}$/i, "");
+  return `file:${stem.toLowerCase()}`;
+}
+
+/**
  * The pictures of one post, in the order they appear, as the viewer steps through them. It reads
  * the post's transformed HTML (the same string the text view draws), so what the reader taps is
  * exactly what the gallery holds.
  */
 export function postImages(html: string): Shown[] {
   const out: Shown[] = [];
-  const seen = new Set<string>();
+  // Where each identity was placed, so a second address of the same picture folds into the first
+  // instead of becoming another page to step onto.
+  const seen = new Map<string, number>();
   const add = (url: string, display: string) => {
     const full = url || display;
     if (!full || /smilies\//i.test(full)) return;
-    if (seen.has(full)) return;
-    seen.add(full);
+    const keys = display && display !== full ? [imageIdentity(full), imageIdentity(display)] : [imageIdentity(full)];
+    const at = keys.map((k) => seen.get(k)).find((i) => i !== undefined);
+    if (at !== undefined) {
+      // The address met first may have been the drawn copy alone; if this one names the original
+      // as well, it is the better entry for that place in the gallery.
+      const held = out[at];
+      if (full !== display && held.url === held.display) out[at] = shown(full, display);
+      return;
+    }
+    const index = out.length;
+    for (const k of keys) seen.set(k, index);
     out.push(shown(full, display));
   };
   for (const m of html.matchAll(LINKED_IMAGE)) add(m[1], m[2]);
-  for (const m of html.matchAll(PLAIN_IMAGE)) {
-    const src = m[1];
-    if (!out.some((p) => p.display === src || p.url === src)) add(src, src);
-  }
+  for (const m of html.matchAll(PLAIN_IMAGE)) add(m[1], m[1]);
   return out;
 }
 
@@ -156,33 +193,13 @@ function ToolButton(props: { label: string; title?: string; onPress: () => void;
  * so writing into the phone's gallery is not something the app can do itself: the original is
  * handed to the system browser, where a long press saves the picture (the browser's own doing).
  */
-/** Guardrails for the optional full-resolution view: the original can be thousands of pixels
- *  wide and decoding it is what fails on Android. A picture beyond either limit is refused. */
-const FULL_MAX_EDGE = 5000;
-const FULL_MAX_PIXELS = 20_000_000;
-
-/** Load the original after checking it is safe to decode. The bytes are fetched once to read the
- *  header (`pixelSize`); the `<Image>` then loads that same URL. Small enough originals switch in,
- *  too large ones are refused with a message instead of risking an out-of-memory crash. */
-async function showOriginal(url: string, name: string, onAllowed: () => void): Promise<void> {
-  notify("image-full", "正在检查原图尺寸…");
-  try {
-    const bytes = await fetchAttachment(url, name);
-    const size = pixelSize(bytes);
-    if (!size) {
-      notify("image-full", "无法识别原图格式，继续使用缩略图。");
-      return;
-    }
-    if (size.width > FULL_MAX_EDGE || size.height > FULL_MAX_EDGE || size.width * size.height > FULL_MAX_PIXELS) {
-      notify("image-full", `原图 ${size.width}×${size.height} 过大，已拒绝加载以避免内存不足。`);
-      return;
-    }
-    onAllowed();
-  } catch (e) {
-    const reason = e instanceof Error ? e.message : "未知错误";
-    notify("image-full", `无法加载原图：${reason}`);
-  }
-}
+/**
+ * The original is handed straight to `<Image>`, which downloads it through the runtime's disk
+ * cache and decodes it at the size it is drawn (`inSampleSize`, from the view's own pixels) — so a
+ * fifty-megapixel photo costs a screenful of memory, not fifty. Reading the file's header first,
+ * as this used to do, meant downloading the whole original into the app's own memory just to
+ * learn its size, and refusing anything over 8 MB before the picture was ever drawn.
+ */
 
 /** Whether this platform can write a file at all, probed once and remembered.
  *
@@ -422,9 +439,12 @@ export function ImageViewer() {
             >
               {/* The picture shown keeps this first position in the box for its whole life, so a
                   step never remounts (and re-decodes) it: the one being left is drawn after it,
-                  under it, for as long as the step plays. */}
+                  under it, for as long as the step plays. The original, when asked for, is laid
+                  over it the same way — switching the `src` of this one made the platform load,
+                  decode and lay the picture out again mid-drag, which ate the step that was being
+                  made right then. */}
               <Image
-                src={fullImage() ? current()!.url : current()!.display}
+                src={current()!.display}
                 // No fade: one on top of the slide would show the box through the arriving picture.
                 fadeDuration={0}
                 style={{
@@ -432,6 +452,23 @@ export function ImageViewer() {
                   transform: [{ translateX: enteringX }], zIndex: 2,
                 }}
               />
+              {fullImage() ? (
+                <Image
+                  src={current()!.url}
+                  fadeDuration={0}
+                  // The original failed (a truncated file, or the forum's sign-in page): back to
+                  // the copy the post carried rather than leaving the box empty.
+                  onError={() => {
+                    fullImage.set(false);
+                    notify("image-full", "原图加载失败，已显示缩略图。");
+                  }}
+                  style={{
+                    position: "absolute", left: 0, top: 0, width: availW, height: availH,
+                    objectFit: "contain", borderRadius: 6,
+                    transform: [{ translateX: enteringX }], zIndex: 3,
+                  }}
+                />
+              ) : null}
               {leaving() !== null ? (
                 <Image
                   src={gallery()!.items[leaving()!].display}
@@ -473,9 +510,8 @@ export function ImageViewer() {
                   <>
                     <View
                       onPress={() => {
-                        const item = current();
                         menuOpen.set(false);
-                        if (item) void showOriginal(item.url, item.name, () => fullImage.set(true));
+                        fullImage.set(true);
                       }}
                       accessibilityLabel="查看原图"
                       style={{ paddingVertical: 14, alignItems: "center" }}

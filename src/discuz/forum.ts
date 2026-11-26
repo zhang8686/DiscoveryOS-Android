@@ -1,6 +1,6 @@
 import { currentFormHash, currentUser, findFloor, isLoginRequired, pageSize, request } from "./client";
-import { parseBookmarks, parseChannels, parseChannelLinks, parseMyReplies, parseMyThreads, parseNotices, parsePmConversation, parsePmUsers, parsePosts, parseProfile, parseReplies, parseSearchResults, parseThreadPageInfo, parseUser, type Author, type Channel, type PmMessage, type Post, type Profile, type Reply } from "./parse";
-import { formEncodeGb, htmlEntities } from "./encoding";
+import { parseBookmarks, parseChannels, parseChannelLinks, parseMyReplies, parseMyThreads, parseNotices, parsePmConversation, parsePmUsers, parsePosts, parseProfile, parseReplies, parseSearchResults, parseThreadPageInfo, parseUser, searchNextHref, type Author, type Channel, type PmMessage, type Post, type Profile, type Reply } from "./parse";
+import { htmlEntities } from "./encoding";
 import { BUILTIN_CHANNELS, mergeChannels } from "./channels";
 
 export const DEMO_REPLIES: import("./parse").Reply[] = [
@@ -80,9 +80,12 @@ export function loadPosts(fid: string, page = 1, order: SortOrder = "lastpost"):
 /**
  * The threads whose titles contain `keyword`, in every channel (`search.php`,
  * newest reply first). The site answers signed-out searches with a notice, not
- * a list, so that is reported as a sign-in error. The site returns one page.
+ * a list, so that is reported as a sign-in error. `next` is the pager's own
+ * address for page 2 — undefined when the search fits on one page.
  */
-export async function searchThreads(keyword: string): Promise<Post[]> {
+export type SearchResults = { posts: Post[]; next?: string };
+
+export async function searchThreads(keyword: string): Promise<SearchResults> {
   const html = await request("GET", "search.php", {
     query: [
       ["srchtype", "title"],
@@ -97,9 +100,18 @@ export async function searchThreads(keyword: string): Promise<Post[]> {
       ["ascdesc", "desc"],
     ],
   });
+  return searchPage(html);
+}
+
+/** Page 2 and on, by the link the previous page printed: it carries the `searchid` the site
+ *  keeps the result set under, which no query we could build ourselves would have. */
+export async function searchMore(href: string): Promise<SearchResults> {
+  return searchPage(await request("GET", href));
+}
+
+function searchPage(html: string): SearchResults {
   if (html.includes("您还未登录")) throw new Error(currentUser() ? "搜索需要重新登录" : "登录后才能搜索");
-  const posts = parseSearchResults(html);
-  return posts;
+  return { posts: parseSearchResults(html), next: searchNextHref(html) };
 }
 
 type ReplyPage = { title?: string; fid?: string; lastPage?: number; replies: Reply[] };

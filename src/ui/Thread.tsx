@@ -1,4 +1,4 @@
-import { Clipboard, cleanup, colorScheme, createAnimatedValue, createMotion, effect, keymap, List, pixelRatio, signal, Storage, Text, View, windowSize, type PasteEvent, type ListRef, type JSX } from "nsh";
+import { Clipboard, cleanup, colorScheme, createAnimatedValue, createMotion, effect, keymap, List, signal, Storage, Text, View, windowSize, type ListRef, type JSX } from "nsh";
 import { settleBack, settleExit, slideIn } from "./pageSlide";
 import { Dialog, TextView } from "nsh/base";
 import { currentUser, deletePost, editPost, HOST, loadEditForm, postReply, ReplyRefused, uploadAttachment, uploadEditAttachment, type EditForm } from "../discuz/client";
@@ -12,12 +12,13 @@ import { downloadAttachment } from "./downloads";
 import { DISCUZ_EXTENSIONS, renderDiscuzNode } from "./discuzMarkup";
 import { useCommand } from "./commands";
 import { openLink } from "./links";
+import { mediaKind, mediaNote, onForum, type MediaKind } from "./media";
 import { timeAgo } from "../discuz/timeAgo";
 import { LoadingBar } from "./LoadingBar";
 import { notify } from "./toast";
 import { palette } from "./appearance";
 import { LineIcon } from "./lineIcons";
-import { openGallery, openImageViewer, postImages } from "./imageViewer";
+import { imageIdentity, openGallery, openImageViewer, postImages } from "./imageViewer";
 import { titleBarShown } from "./TitleBar";
 import { BrowserIcon, BubbleIcon, EnvelopeIcon, LinkIcon, PencilIcon, QuoteIcon, StarIcon, TrashIcon } from "./icons";
 import { ReplyCard } from "./ReplyCard";
@@ -304,7 +305,13 @@ export function Thread(props: {
    *  its own when it does not (an attachment link, or a picture the transform dropped). */
   function openPostImage(r: Reply, full: string, display: string) {
     const list = postPictures(r);
-    const index = list.findIndex((p) => p.url === full || p.display === display || p.display === full);
+    // The gallery folds the several addresses of one picture into one entry, so the tap is looked
+    // up by the same identity: matching the strings alone could land on the drawn copy while the
+    // reader tapped the original, or miss both after a fold.
+    const wanted = [full, display].filter(Boolean).map(imageIdentity);
+    const index = list.findIndex(
+      (p) => wanted.includes(imageIdentity(p.url)) || wanted.includes(imageIdentity(p.display)),
+    );
     if (index >= 0) openGallery(list, index);
     else openImageViewer(full, display);
   }
@@ -325,7 +332,36 @@ export function Thread(props: {
       return;
     }
     const file = attachmentLinks(r.body).find((a) => absoluteUrl(a.url, HOST) === url);
-    void downloadAttachment(url, file?.name ?? "附件");
+    const name = file?.name ?? "附件";
+    // An attachment is `attachment.php?aid=…`: nothing in the address says what it holds, but the
+    // link's text does (the forum prints the filename). A video goes to the browser — the app
+    // cannot keep one over its 8 MB write and its players send no cookies — while an audio file,
+    // small enough, is downloaded and handed to the share sheet.
+    const kind = mediaKind(name);
+    if (kind === "video") {
+      const note = mediaNote("video");
+      if (note) notify("media", note);
+      void openLink(url);
+      return;
+    }
+    void downloadAttachment(url, name);
+  }
+
+  /** A link to something playable, opened where it can actually play. */
+  function openMedia(url: string, kind: MediaKind): void {
+    if (kind === "video") {
+      const note = onForum(url) ? mediaNote("video") : null;
+      if (note) notify("media", note);
+      void openLink(url);
+      return;
+    }
+    // Audio: the browser plays it in place; a forum attachment is kept and handed over instead,
+    // since its address needs the session the browser does not have.
+    if (onForum(url)) {
+      void downloadAttachment(url, url.split(/[?#]/)[0].split("/").pop() || "音频");
+      return;
+    }
+    void openLink(url);
   }
 
   /** Loads the first pictures a page's floors will draw, in reading order, so their bytes are in
@@ -333,10 +369,17 @@ export function Thread(props: {
    *  faces of the floors are left to their own `Avatar`s (small, and drawn at once), and the rest
    *  of a page's pictures ask for themselves as the view reaches them.
    *
-   *  A thread's own pictures come before whatever the list left queued: the queue is cleared as the
-   *  page arrives, so a picture the reader is now looking at is never behind one they scrolled
+   *  Only the page that just arrived is warmed (`list`), so the twelve places go to the pictures
+   *  the reader has not reached yet instead of re-queueing the ones already on screen. A thread's
+   *  own pictures come before whatever the list left queued: the queue is cleared when another
+   *  thread opens, so a picture the reader is now looking at is never behind one they scrolled
    *  past. Downloading is not interrupted (the runtime's pool finishes those), only the waiting. */
-  function warmPageImages(list: Reply[]): void {
+  let warmedThreadId = "";
+  function warmPageImages(list: Reply[], firstPage: boolean): void {
+    if (firstPage && warmedThreadId !== props.post.id) {
+      warmedThreadId = props.post.id;
+      clearWarmedImages();
+    }
     const urls: string[] = [];
     for (const r of list) {
       for (const m of bodyHtml(r).matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
@@ -345,7 +388,6 @@ export function Thread(props: {
       }
       if (urls.length >= 12) break;
     }
-    clearWarmedImages();
     warmImages(urls, 12);
     // The floors' faces, warmed apart from the body's pictures: a floor draws its avatar as it
     // lays itself out. The page carries the face's address; a row without one builds it by uid.
@@ -424,7 +466,7 @@ export function Thread(props: {
         failedPage.set(null);
         // The page's pictures are warmed now, in parallel with the layout that draws them: the
         // text arrives first and the pictures fill in, which is what the reader was waiting for.
-        warmPageImages(merged.items);
+        warmPageImages(list, n === 1);
         if (n === 1) {
           firstLoad.set(false);
           markSlowFirst(false);
@@ -442,7 +484,7 @@ export function Thread(props: {
           setTimeout(() => { void loadReplyPage(props.post.id, nextPage).catch(() => undefined); }, 800);
         }
       })
-      .catch((e) => {
+      .catch(() => {
         failedPage.set(n);
         if (n === 1) { firstLoad.set(false); markSlowFirst(false); }
       })
@@ -961,7 +1003,11 @@ export function Thread(props: {
               // reader sees: the same type, leading, paragraph sums above blocks, margins, alignment
               // and line breaks — no second renderer to keep in step, and no empty line where one
               // would have parted the two.
-              <View style={{ gap: 12, alignSelf: "stretch" }}>
+              // `minWidth: 0` leaves the card's width as the only limit: a floor taken from the
+              // body's longest unbreakable run (a URL) would lay the text out wider than the card.
+              // `alignSelf: "stretch"` already spans it; `width` stays out of the way so the text
+              // measures against the card and wraps inside it.
+              <View style={{ gap: 12, alignSelf: "stretch", minWidth: 0 }}>
                 <TextView
                   html={drawnBody(item())}
                   selectable={true}
@@ -969,9 +1015,17 @@ export function Thread(props: {
                     root: {
                       fontSize: displaySettings().body,
                       lineHeight: Math.round(displaySettings().body * displaySettings().spacing),
+                      // Both edges flush, as a printed page: the runtime spreads each line but the
+                      // last to the measure, and `TextLayouts` scales its character positions to
+                      // match so the selection handles still land on the character under them.
+                      textAlign: "justify",
                       // The system blue Android draws its own selection in (Pixel's accent).
                       selectionColor: "#4285F4",
                     },
+                    // What a floor quotes is the words of another post, not this one's: drawn a
+                    // shade behind the reply around it (the muted color the times use), so the
+                    // quote and the new text part at a glance instead of reading as one block.
+                    blockquote: { color: palette().muted },
                     ...(item().seq === 1 ? OP_TITLE_STYLES : {}),
                   }}
                   extensions={DISCUZ_EXTENSIONS}
@@ -998,6 +1052,12 @@ export function Thread(props: {
                     // A picture, or a Discuz attachment that is really an image, opens the zoomable viewer.
                     if (isAttachmentUrl(url)) {
                       void openAttachment(item(), url);
+                      return;
+                    }
+                    // A file that plays (or a page that plays one) goes where it can: see `openMedia`.
+                    const media = mediaKind(url);
+                    if (media) {
+                      openMedia(url, media);
                       return;
                     }
                     if (/\.(?:jpg|jpeg|png|gif|webp|bmp)(?:[?#]|$)/i.test(url)) {

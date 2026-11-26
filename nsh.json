@@ -1,11 +1,14 @@
 {
   "name": "DiscoveryOSX",
   "id": "com.Android.DiscoveryOSX",
-  "version": "1.2.2-3",
-  "build": 87,
+  "version": "1.2.2-4",
+  "build": 92,
   "icon": "icon.png",
   "android": {
     "targetSdk": 35
+  },
+  "updater": {
+    "github": "zhang8686/DiscoveryOS-Android"
   },
   "capabilities": {
     "application": true,
@@ -56,10 +59,14 @@
     },
     "fs": {
       "read": [
-        "${dataDir}"
+        "${dataDir}",
+        "/data/user/0/com.Android.DiscoveryOSX/cache/nsh",
+        "/data/data/com.Android.DiscoveryOSX/cache/nsh"
       ],
       "write": [
-        "${dataDir}"
+        "${dataDir}",
+        "/data/user/0/com.Android.DiscoveryOSX/cache/nsh",
+        "/data/data/com.Android.DiscoveryOSX/cache/nsh"
       ]
     },
     "picker": true

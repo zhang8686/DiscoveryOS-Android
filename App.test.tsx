@@ -68,6 +68,13 @@ test("the blank avatar opens the sign-in dialog, and Cancel closes it", async ()
   expect(app.texts()).not.toContain("账户");
 });
 
+test("the display settings sheet offers clearing the cache", async () => {
+  const app = await open("./App.tsx", { width: 1200 });
+  await app.press("label:显示设置");
+  expect(app.texts()).toContain("清除缓存");
+  expect(app.texts()).toContain("图片与附件缓存，不会退出登录");
+});
+
 test("a failed sign-in shows a Chinese error", async () => {
   const app = await open("./App.tsx", { width: 1200 });
   await app.press("label:登录 >> nth=0");

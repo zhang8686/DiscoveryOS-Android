@@ -33,6 +33,23 @@ test("a warm-up takes only the first `limit` addresses, in reading order", async
   expect(seen).toEqual(["1.jpg", "2.jpg", "3.jpg"]);
 });
 
+test("only three warm-ups run at once, leaving the pool a thread for what is on screen", async () => {
+  clearWarmedImages();
+  let running = 0;
+  let peak = 0;
+  setImageLoader((url) => {
+    void url;
+    running++;
+    peak = Math.max(peak, running);
+    return new Promise<void>((resolve) => setTimeout(() => { running--; resolve(); }, 5));
+  });
+  warmImages(["1.jpg", "2.jpg", "3.jpg", "4.jpg", "5.jpg", "6.jpg", "7.jpg", "8.jpg", "9.jpg"], 9);
+  await waitIdle();
+  expect(peak).toBe(3);
+  expect(warmedCount()).toBe(9);
+  setImageLoader(null);
+});
+
 test("blank addresses are skipped and a failed picture does not stop the queue", async () => {
   clearWarmedImages();
   const seen: string[] = [];

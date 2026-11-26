@@ -1,5 +1,5 @@
 import { expect, test } from "nsh/test";
-import { linkifyBareUrls, htmlToText, parsePmConversation, parsePmUsers, absolutize, floorFromLink, captureGroups, htmlDecode, parseBookmarks, parseChannels, parseNotices, parseMyReplies, parseMyThreads, unescapeNumericEntities, parsePosts, parseProfile, parseReplies, parseSearchResults, parseUser, mergePage, fixImages, removePercentEncoding, trimLeadingBlanks, threadIdFromLink, parseThreadPageInfo, parseLastPage, showAttachedPictures } from "./parse";
+import { linkifyBareUrls, htmlToText, parsePmConversation, parsePmUsers, absolutize, floorFromLink, captureGroups, htmlDecode, parseBookmarks, parseChannels, parseNotices, parseMyReplies, parseMyThreads, unescapeNumericEntities, parsePosts, parseProfile, parseReplies, parseSearchResults, searchNextHref, parseUser, mergePage, fixImages, removePercentEncoding, trimLeadingBlanks, threadIdFromLink, parseThreadPageInfo, parseLastPage, showAttachedPictures } from "./parse";
 
 test("captureGroups returns one match's groups, or every whole match", () => {
   expect(captureGroups("a1b", "a(\\d)b", true)).toEqual(["1"]);
@@ -330,6 +330,22 @@ test("parses the threads of a title search, without the keyword's highlight tags
     },
   ]);
   expect(parseSearchResults("<table><tr><td>没有找到匹配的结果</td></tr></table>")).toEqual([]);
+});
+
+test("follows the pager's own link to the search's next page", () => {
+  // The forward link carries the searchid the site keeps the result set under, escaped once.
+  const html = `<div class="pg"><strong>1</strong>
+<a href="search.php?mod=forum&amp;searchid=189&amp;orderby=lastpost&amp;ascdesc=desc&amp;searchsubmit=yes&amp;page=2"
+   class="nxt">下一页</a></div>`;
+  expect(searchNextHref(html)).toBe(
+    "search.php?mod=forum&searchid=189&orderby=lastpost&ascdesc=desc&searchsubmit=yes&page=2",
+  );
+});
+
+test("a search page without a pager has no next page", () => {
+  expect(searchNextHref('<div class="pg"><strong>1</strong></div>')).toBe(undefined);
+  // A previous-page link is not a next page: only the forward one is followed.
+  expect(searchNextHref('<a href="search.php?searchid=9&amp;page=1" class="prev">上一页</a>')).toBe(undefined);
 });
 
 test("parses the private-message list: one row per correspondent", () => {

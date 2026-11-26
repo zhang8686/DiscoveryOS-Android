@@ -1,4 +1,4 @@
-import { effect, Image, signal, Text, View, windowSize } from "nsh";
+import { effect, signal, Text, View, windowSize } from "nsh";
 import { loadProfile } from "../discuz/forum";
 import type { Profile } from "../discuz/parse";
 import { palette } from "./appearance";

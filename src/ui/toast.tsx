@@ -1,7 +1,6 @@
 import { createMotion, signal, Text, View } from "nsh";
 import { ToastManager, type ToastEntry } from "nsh/base";
 import { palette } from "./appearance";
-import { titleBarShown } from "./TitleBar";
 
 const TIMEOUT_MS = 3000;
 const ACTION_TIMEOUT_MS = 6000;

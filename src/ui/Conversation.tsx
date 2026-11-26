@@ -64,7 +64,7 @@ export function Conversation(props: {
       .then((list) => {
         if (token === latest) messages.set(list);
       })
-      .catch((e) => {
+      .catch(() => {
         if (token === latest) notify("pm-load", "私信加载失败，点此重试。", () => load(uid));
       });
     // The draft saved for this correspondent comes back with the conversation.

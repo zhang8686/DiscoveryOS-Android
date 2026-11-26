@@ -207,6 +207,25 @@ export function parseSearchResults(html: string): Post[] {
   return posts;
 }
 
+/**
+ * The address of a search's next page, or undefined when the pager has none.
+ *
+ * Discuz keeps the whole query in the pager's own href — including the `searchid` the site
+ * insists on before it will serve page 2 — so following that href is safer than rebuilding the
+ * query from the parameters we happen to know. The forward link is marked `nxt` on the default
+ * skin; a skin that only labels it is read by its text instead.
+ */
+export function searchNextHref(html: string): string | undefined {
+  for (const tag of captureGroups(html, "<a\\b[^>]*>[\\s\\S]*?</a>")) {
+    const href = /href="([^"]*)"/i.exec(tag)?.[1];
+    if (!href) continue;
+    const link = htmlDecode(href);
+    if (!/search\.php\?/i.test(link)) continue;
+    if (/\bnxt\b/i.test(tag) || /下一页|下页/.test(tag)) return link;
+  }
+  return undefined;
+}
+
 export type Author = { id: string; name: string; avatar: string };
 export type Reply = {
   id: string;
@@ -848,28 +867,6 @@ export function fixDiscuzMarkup(html: string): string {
     // the text view: a link stands in its place, and the player under the post plays it.
     .replace(/<iframe\b[^>]*\bsrc="([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi, (_, src: string) => `<p><a href="${src}">▶ ${src}</a></p>`)
     .replace(/\[media(?:=[^\]]*)?\]([\s\S]*?)\[\/media\]/gi, (_, body: string) => `<p><a href="${body.trim()}">▶ ${body.trim()}</a></p>`);
-}
-
-/**
- * Splits a post's `<br>` line breaks into paragraph boundaries (`</p><p>`), so
- * NSH's text view lays each visual line out as its own block. The selectable text
- * view resolves a long press against a block's lines; a block that spans several
- * `<br>` lines hits only its first line, so a press on a later line lands at the
- * block's end. One paragraph per line makes the press land on the right line.
- * `<pre>` and `<code>` blocks are left alone — their own `\n` breaks stay put.
- * Run after `fixDiscuzMarkup` and `fixImages`.
- */
-export function splitBrIntoParagraphs(html: string): string {
-  if (!/<br\s*\/?>/i.test(html)) return html;
-  const openTag = (chunk: string) => chunk.replace(/<br\s*\/?>/gi, "</p><p>");
-  let out = "";
-  let at = 0;
-  const codeBlock = /<(pre|code)\b[^>]*>[\s\S]*?<\/\1>/gi;
-  for (let m = codeBlock.exec(html); m; m = codeBlock.exec(html)) {
-    out += openTag(html.slice(at, m.index)) + m[0];
-    at = m.index + m[0].length;
-  }
-  return out + openTag(html.slice(at));
 }
 
 /** The style of a Discuz `<font>` (`[color=…]` and `[size=N]`): a hex or a plain color name, and the font size in pixels. */

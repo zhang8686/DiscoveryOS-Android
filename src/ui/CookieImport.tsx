@@ -9,10 +9,6 @@ export const cookieImportOpen = signal(false);
 
 const pastedText = signal("");
 
-export function openCookieImport(): void {
-  cookieImportOpen.set(true);
-}
-
 let onImported: (() => void) | null = null;
 
 export function setOnCookiesImported(fn: () => void): void {

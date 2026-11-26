@@ -1,5 +1,5 @@
 import { Input } from "nsh/base";
-import { colorScheme, signal, Text, View, windowSize } from "nsh";
+import { signal, Text, View, windowSize } from "nsh";
 import { sendPm } from "../discuz/forum";
 import { notify } from "./toast";
 import { palette } from "./appearance";

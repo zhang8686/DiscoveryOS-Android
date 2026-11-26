@@ -5,10 +5,6 @@ import { palette } from "./appearance";
 /** Whether the About dialog is shown. Set from the menu; read by the app root. */
 export const aboutOpen = signal(false);
 
-export function openAbout(): void {
-  aboutOpen.set(true);
-}
-
 function closeAbout(): void {
   aboutOpen.set(false);
 }

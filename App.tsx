@@ -16,9 +16,8 @@ import { hideSystemTitleBar } from "./src/ui/TitleBar";
 import { SettingsSheet } from "./src/ui/SettingsSheet";
 import { GearIcon } from "./src/ui/icons";
 import { isPhoneDevice, keyboardInset } from "./src/ui/keyboard";
-import { availableUpdate, installUpdate, startUpdateCheck } from "./src/update";
-import { updateTitle } from "./src/updateManifest";
-import { appearanceMode, appearanceName, cycleAppearance, palette, restoreAppearance, type AppearanceMode } from "./src/ui/appearance";
+import { availableUpdate, checkForUpdate, installUpdate, skipUpdate, startUpdateCheck, updateLabel, type AvailableUpdate } from "./src/update";
+import { appearanceMode, appearanceName, cycleAppearance, palette, restoreAppearance } from "./src/ui/appearance";
 import { installMenu } from "./src/ui/commands";
 import { CookieImportDialog, cookieImportOpen, setOnCookiesImported } from "./src/ui/CookieImport";
 import { AboutDialog, aboutOpen } from "./src/ui/AboutDialog";
@@ -120,7 +119,7 @@ const APP_VERSION_LABEL = (() => {
   }
 })();
 
-function MenuAction(props: { label: string; trailing?: string; onPress: () => void }) {
+function MenuAction(props: { label: string; trailing?: string; dot?: () => boolean; onPress: () => void }) {
   const hover = createAnimatedValue(0);
   return (
     <View
@@ -148,8 +147,16 @@ function MenuAction(props: { label: string; trailing?: string; onPress: () => vo
       />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         <Text style={{ fontSize: 13, color: palette().text, flex: 1 }}>{props.label}</Text>
-        {/* The build, dimmed, to the right of the row it belongs to. */}
-        {props.trailing ? <Text style={{ fontSize: 11, color: palette().muted }}>{props.trailing}</Text> : null}
+        {/* The build, dimmed, to the right of the row it belongs to. A red dot marks a release
+            the reader has not answered yet; it sits on the version so the badge itself carries it. */}
+        {props.trailing ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Text style={{ fontSize: 11, color: palette().muted }}>{props.trailing}</Text>
+            {props.dot?.() ? (
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#e5484d" }} />
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -178,6 +185,8 @@ function App() {
   const avatarNode = signal<ViewRef | null>(null);
   // The sign-out confirmation, opened from the menu's Sign Out.
   const confirmOpen = signal(false);
+  // The release offer: opened from the version badge, closed by 「是」 or 「忽略」.
+  const updateOpen = signal(false);
   // The display settings panel, opened from the gear between the account and the theme.
   const settingsOpen = signal(false);
   // The forum's own 提醒 / 短消息 openers, handed up so the account card can call them directly:
@@ -186,14 +195,22 @@ function App() {
   // Unread notices, reported by the forum: a red dot on the avatar is the only place they show
   // now that 提醒 has left the column's own rows.
   const noticesUnread = signal(0);
+  // The same for private messages, so the card's two openers carry the dots the column does not.
+  const messagesUnread = signal(0);
 
+  // The last profile asked for. A slow answer for the previous account must not land on the
+  // current one: signing out and in again would otherwise show the old name's avatar and fields.
+  let profileToken = 0;
   function refreshProfile(name: string) {
+    const token = ++profileToken;
     loadProfile(name)
       .then((p) => {
+        if (token !== profileToken) return;
         avatar.set(p.avatar ?? null);
         profile.set(p);
       })
       .catch(() => {
+        if (token !== profileToken) return;
         // No profile to show: the menu stops saying it is loading, and shows only Sign Out.
         avatar.set(null);
         profile.set({});
@@ -349,26 +366,50 @@ function App() {
           <View
             onPress={() => { closeMenu(); forumActions()?.openNotices(); }}
             accessibilityLabel="提醒"
-            style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5,
-                     paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: palette().border }}
+            style={{ flex: 1, position: "relative", flexDirection: "row", alignItems: "center",
+                     justifyContent: "center", gap: 5, paddingVertical: 6, borderRadius: 8,
+                     borderWidth: 1, borderColor: palette().border }}
           >
             <LineIcon name="bell" size={13} />
             <Text style={{ fontSize: 12, color: palette().text }}>提醒</Text>
+            {/* The count the avatar's dot stands for, on the button that opens the list. */}
+            {noticesUnread() > 0 ? (
+              <View style={{ position: "absolute", top: 3, right: 5, width: 6, height: 6,
+                             borderRadius: 3, backgroundColor: "#e5484d" }} />
+            ) : null}
           </View>
           <View
             onPress={() => { closeMenu(); forumActions()?.openMessages(); }}
             accessibilityLabel="短消息"
-            style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5,
-                     paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: palette().border }}
+            style={{ flex: 1, position: "relative", flexDirection: "row", alignItems: "center",
+                     justifyContent: "center", gap: 5, paddingVertical: 6, borderRadius: 8,
+                     borderWidth: 1, borderColor: palette().border }}
           >
             <LineIcon name="mail" size={13} />
             <Text style={{ fontSize: 12, color: palette().text }}>短消息</Text>
+            {messagesUnread() > 0 ? (
+              <View style={{ position: "absolute", top: 3, right: 5, width: 6, height: 6,
+                             borderRadius: 3, backgroundColor: "#e5484d" }} />
+            ) : null}
           </View>
         </View>
         <View style={{ height: 1, backgroundColor: palette().border, marginVertical: 4 }} />
+        {/* The build and the release it may be behind: the dot rides on the version, and a press
+            asks about that release. Sign out is a row of its own below, as it always was. */}
+        <MenuAction
+          label="检查更新"
+          trailing={APP_VERSION_LABEL}
+          dot={() => availableUpdate() !== null}
+          onPress={() => {
+            closeMenu();
+            openUpdate();
+          }}
+        />
+        {/* The rule separates what asks a question from what ends the session: 退出登录 is the
+            one row here that cannot be undone by pressing again. */}
+        <View style={{ height: 1, backgroundColor: palette().border, marginVertical: 4 }} />
         <MenuAction
           label="退出登录"
-          trailing={APP_VERSION_LABEL}
           onPress={() => {
             closeMenu();
             confirmOpen.set(true);
@@ -378,16 +419,33 @@ function App() {
     );
   };
 
-  // An update the user can apply now; a downloaded one also applies at the next start.
+  // Android installs nothing by itself, so applying an update is opening the release page, where
+  // the browser downloads the APK and the system installs it over this one (same key: the sign-in
+  // and the settings stay). The badge's press reaches the same place.
   const applyUpdate = () => {
-    const manifest = availableUpdate();
-    if (!manifest) return;
-    notify("update", `正在更新到 ${manifest.version}…`);
-    installUpdate(manifest)
+    const update: AvailableUpdate | null = availableUpdate();
+    if (!update) return;
+    installUpdate(update)
       .then((result) => {
-        if (result.startsWith("err")) notify("update", "更新失败，请稍后再试");
+        if (result !== "opened") notify("update", "无法打开下载页，请稍后再试");
       })
-      .catch(() => notify("update", "更新失败，请稍后再试"));
+      .catch(() => notify("update", "无法打开下载页，请稍后再试"));
+  };
+
+  // The version badge's press: offer the release the check already found, or look now when the
+  // dot is off (the reader asked, so this one answers either way).
+  const openUpdate = () => {
+    if (availableUpdate()) {
+      updateOpen.set(true);
+      return;
+    }
+    notify("update", "正在检查新版本…");
+    checkForUpdate(true)
+      .then((found) => {
+        if (found) updateOpen.set(true);
+        else notify("update", "已是最新版本");
+      })
+      .catch(() => notify("update", "检查失败，请稍后再试"));
   };
 
   // The account row and its controls sit at the bottom of the channel column,
@@ -469,7 +527,7 @@ function App() {
         {availableUpdate() ? (
           <IconButton
             icon={<DownloadIcon size={18} />}
-            title={updateTitle(availableUpdate()!)}
+            title={updateLabel(availableUpdate()!)}
             onPress={applyUpdate}
           />
         ) : null}
@@ -632,6 +690,66 @@ function App() {
     </View>
   );
 
+  // The release offer: the version the check found, what it says, and the two answers. 「忽略」
+  // keeps the version out of the badge until the next one; 「是」 opens the release page.
+  // A function, not an element: the app's body runs once, so an element built here would hold
+  // whatever the signal said at start-up. Called where the dialog is mounted.
+  const updateDialog = (): JSX.Element | null => {
+    const update = availableUpdate();
+    if (!update) return null;
+    return (
+      <View
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "rgba(0,0,0,0.35)",
+        }}
+      >
+        <View
+          style={{
+            width: Math.min(320, windowSize().width - 40),
+            padding: 16,
+            gap: 10,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: palette().border,
+            backgroundColor: palette().surface,
+          }}
+        >
+          <Text style={{ fontSize: 15, fontWeight: 600, color: palette().text }}>
+            {`发现新版本 V${update.version}`}
+          </Text>
+          {update.notes ? (
+            <Text style={{ fontSize: 13, color: palette().text }}>{update.notes}</Text>
+          ) : null}
+          <Text style={{ fontSize: 12, color: palette().muted }}>点「是」打开下载页，覆盖安装后登录状态不变。</Text>
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+            <Button
+              label="忽略"
+              secondary={true}
+              onPress={() => {
+                updateOpen.set(false);
+                void skipUpdate();
+              }}
+            />
+            <Button
+              label="是"
+              onPress={() => {
+                updateOpen.set(false);
+                applyUpdate();
+              }}
+            />
+          </View>
+        </View>
+      </View>
+    );
+  };
+
   // The whole interface used to be one `selectable` view so every text could be copied.
   // On Android that makes NSH wrap the entire window in a `SelectableView` selection layer
   // (it captures ACTION_DOWN to start a long-press text-selection gesture). That layer sits
@@ -685,6 +803,7 @@ function App() {
           onSignInNeeded={() => dialogOpen.set(true)}
           onActions={(api) => forumActions.set(api)}
           noticesUnread={noticesUnread}
+          messagesUnread={messagesUnread}
         />
         ) : (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
@@ -694,6 +813,7 @@ function App() {
       </View>
       {dialogOpen() ? signInDialog : null}
       {confirmOpen() ? signOutDialog : null}
+      {updateOpen() ? updateDialog() : null}
       {debugEnabled && cookieImportOpen() ? <CookieImportDialog /> : null}
       {aboutOpen() ? <AboutDialog /> : null}
       {/* Mounted only while a picture is shown: the read has to happen in this
